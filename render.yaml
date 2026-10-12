@@ -1,8 +1,11 @@
+# Configuración para Render (botón "Deploy to Render" del README): servidor gratis con dirección fija.
 services:
   - type: web
     name: escondite-3d
     runtime: node
     plan: free
+    # Fráncfort es la región más cercana a España: menos retraso al jugar
+    region: frankfurt
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health

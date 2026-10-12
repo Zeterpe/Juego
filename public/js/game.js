@@ -287,9 +287,10 @@ export class Game {
     }
   }
 
-  spawn(pos, rot) {
+  spawn(pos, rot, propRot) {
     this.me.x = pos[0]; this.me.y = pos[1]; this.me.z = pos[2]; this.me.vy = 0;
     if (rot !== undefined) { this.yaw = rot; this.propRot = rot; }
+    if (propRot !== undefined) this.propRot = propRot;
     this.pitch = 0;
     this.rotLocked = false;
   }

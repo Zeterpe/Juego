@@ -3,6 +3,8 @@
 import { spawn } from 'child_process';
 import { io } from 'socket.io-client';
 import assert from 'assert/strict';
+import { MAPS } from '../shared/maps.js';
+import { buildColliders, collidesAny, bodyBox } from '../shared/physics.js';
 
 const PORT = 3999;
 const URL = `http://localhost:${PORT}`;
@@ -16,11 +18,18 @@ await new Promise((resolve) => server.stdout.on('data', (d) => d.toString().incl
 // cada cliente es como una pestaña del navegador, con su clave secreta para reconectar
 function client(name, key = `clave-${name}-${Math.random().toString(36).slice(2)}`) {
   const s = io(URL, { transports: ['websocket'], forceNew: true });
-  const c = { s, name, key, id: null, room: null, chat: [], fx: [], spawns: [] };
+  const c = { s, name, key, id: null, room: null, chat: [], fx: [], spawns: [], snaps: new Map() };
   s.on('room', (r) => { c.room = r; });
   s.on('chat', (m) => c.chat.push(m));
   s.on('fx', (e) => c.fx.push(e));
   s.on('spawn', (d) => c.spawns.push(d));
+  // posiciones de todos (15 veces por segundo)
+  s.on('snap', (list) => {
+    for (const [id, x, y, z] of list) {
+      if (!c.snaps.has(id)) c.snaps.set(id, []);
+      c.snaps.get(id).push([x, y, z]);
+    }
+  });
   c.emit = (ev, data) => new Promise((res) => {
     const payload = ['create', 'join', 'rejoin'].includes(ev) ? { key: c.key, ...data } : data;
     s.emit(ev, payload, (r) => { if (r?.ok && r.id) c.id = r.id; res(r); });
@@ -82,7 +91,9 @@ try {
     assert.equal(admin.room.state, 'hiding');
     const roles = admin.room.players.map((p) => p.role);
     assert.equal(roles.filter((r) => r === 'seeker').length, 1);
-    assert.ok(admin.room.players.filter((p) => p.isBot).every((p) => p.role === 'hider' && p.prop));
+    // a igualdad de turnos busca antes una persona que un bot
+    assert.ok(!admin.room.players.find((p) => p.role === 'seeker').isBot);
+    assert.ok(admin.room.players.filter((p) => p.isBot).every((p) => p.role === 'hider'));
     const all = [admin, ana, luis];
     seeker = all.find((c) => c.me().role === 'seeker');
     hiders = all.filter((c) => c !== seeker);
@@ -102,9 +113,11 @@ try {
     assert.equal(seeker.player(hiders[0].name).hp, 100);
   });
 
-  await step('pasa a la fase de búsqueda', async () => {
+  await step('pasa a la fase de búsqueda con los bots ya disfrazados', async () => {
     await sleep(5200);
     assert.equal(admin.room.state, 'seeking');
+    const bots = admin.room.players.filter((p) => p.isBot);
+    assert.ok(bots.every((p) => p.prop), `bots sin disfraz: ${bots.filter((p) => !p.prop).map((p) => p.name)}`);
   });
 
   await step('disparar a un objeto real quita vida al buscador', async () => {
@@ -225,6 +238,84 @@ try {
     assert.equal(marta.spawns.length, 1, 'recibe dónde aparecer');
     sara.s.disconnect();
     marta.s.disconnect();
+  });
+
+  // ------------------------------------------------------------ bots
+  const rita = client('Rita');
+  let ritaCode;
+  await step('pillar a un bot lo convierte en buscador y se pone a buscar', async () => {
+    ritaCode = (await rita.emit('create', { name: 'Rita' })).code;
+    rita.s.emit('settings', { map: 'almacen', hideTime: 5, seekTime: 120, rounds: 1 });
+    rita.s.emit('chat', '/bot 2');
+    await sleep(200);
+    rita.s.emit('start');
+    await sleep(300);
+    assert.equal(rita.me().role, 'seeker', 'la persona busca antes que los bots');
+    await sleep(5200);
+    assert.equal(rita.room.state, 'seeking');
+    const pepe = rita.player('Bot Pepe');
+    for (let i = 0; i < 3; i++) {
+      rita.s.emit('shoot', { kind: 'player', target: pepe.id });
+      await sleep(320);
+    }
+    await sleep(100);
+    assert.equal(rita.player('Bot Pepe').role, 'seeker');
+    assert.ok(rita.player('Bot Pepe').alive);
+    const before = rita.snaps.get(pepe.id).at(-1);
+    await sleep(4500);
+    const after = rita.snaps.get(pepe.id).at(-1);
+    assert.ok(Math.hypot(after[0] - before[0], after[2] - before[2]) > 1, 'el bot buscador se mueve');
+  });
+
+  await step('los bots andan sin atravesar paredes ni muebles', async () => {
+    const cols = buildColliders(MAPS.almacen);
+    let samples = 0;
+    for (const p of rita.room.players.filter((q) => q.isBot)) {
+      for (const [x, y, z] of rita.snaps.get(p.id) || []) {
+        samples++;
+        // un poco más estrecho que el cuerpo real: solo cuenta meterse de verdad dentro de algo
+        assert.ok(!collidesAny(cols, bodyBox(x, y + 0.05, z, 0.12, 0.6)), `${p.name} dentro de un obstáculo en [${x}, ${z}]`);
+      }
+    }
+    assert.ok(samples > 50);
+  });
+
+  await step('un bot buscador pilla a quien no se esconde bien', async () => {
+    rita.s.emit('chat', '/dificultad dificil');
+    rita.s.emit('chat', '/escondido Rita');
+    await sleep(200);
+    assert.equal(rita.room.settings.botLevel, 'dificil');
+    assert.equal(rita.me().role, 'hider');
+    rita.s.emit('chat', '/traer Bot Pepe');
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000 && rita.me().role === 'hider') await sleep(200);
+    assert.ok(rita.fx.some((e) => e.type === 'hit' && e.id === rita.id && e.by === rita.player('Bot Pepe').id), 'el bot le ha dado');
+    assert.ok(rita.fx.some((e) => e.type === 'tracer' && e.by === rita.player('Bot Pepe').id), 'se ven sus disparos');
+    assert.equal(rita.me().role, 'seeker', 'pillada: ahora busca');
+  });
+
+  await step('al acabar la ronda llega un resumen con quién pilló a quién', async () => {
+    rita.s.emit('chat', '/pillar Bot Lola');
+    await sleep(400);
+    assert.equal(rita.room.state, 'roundEnd');
+    const s = rita.room.summary;
+    assert.equal(s.winner, 'seekers');
+    assert.ok(s.catches.some((c) => c.by === 'Bot Pepe' && c.name === 'Rita'));
+    assert.ok(s.standings.length === 3 && s.standings[0].score >= s.standings[2].score);
+    rita.s.disconnect();
+  });
+
+  await step('en el último minuto los escondidos hacen ruido solos', async () => {
+    const tom = client('Tom');
+    await tom.emit('create', { name: 'Tom' });
+    tom.s.emit('settings', { hideTime: 5, seekTime: 30 });
+    tom.s.emit('chat', '/bot 1');
+    await sleep(200);
+    tom.s.emit('start');
+    await sleep(5300 + 10000);
+    assert.ok(tom.fx.some((e) => e.type === 'taunt' && e.forced), 'ruido automático');
+    assert.ok(tom.fx.some((e) => e.type === 'announce' && e.title.includes('Último minuto')));
+    tom.s.disconnect();
   });
 
   await step('enlace corto, código QR y dirección de la red local', async () => {

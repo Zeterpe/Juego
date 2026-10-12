@@ -22,11 +22,24 @@ El plan gratis se duerme si nadie lo usa durante 15 minutos: al entrar después 
 
 1. Uno crea la sala (será el admin) y comparte el enlace corto (WhatsApp, copiar o QR).
 2. Los demás abren el enlace desde el ordenador o el móvil y pulsan **¡Entrar a jugar!** (también pueden escribir el código de 4 letras).
-3. El admin elige mapa y ajustes y pulsa **Empezar**. Si quiere probar solo, puede añadir bots con **🤖 Añadir bot**.
-4. **Escondidos:** tenéis unos segundos para esconderos. Apunta a un objeto y pulsa `E` (o 🎭 en el móvil) para convertirte en él.
-5. **Buscadores:** salen cuando acaba la cuenta atrás. Disparad a los objetos sospechosos. Si aciertas a un jugador: +10 por impacto y +100 al pillarlo (3 impactos). Si disparas a un objeto de verdad pierdes vida y, si llegas a 0, te mareas 5 segundos.
-6. Si está activada la opción, los pillados se convierten en buscadores.
-7. Gana la ronda el equipo que cumpla su objetivo, y **gana la partida quien tenga más puntos** al final de todas las rondas (con podio y confeti 🏆).
+3. El admin elige mapa y ajustes y pulsa **Empezar**. Si sois pocos, puede añadir bots con **🤖 Añadir bot** (ver abajo).
+4. Al empezar cada ronda sale una tarjeta que te dice si te toca **esconderte** o **buscar**.
+5. **Escondidos:** tenéis unos segundos para esconderos. Apunta a un objeto y pulsa `E` (o 🎭 en el móvil) para convertirte en él.
+   Lo mejor es esconderse junto a objetos iguales. Hacer ruido (`T`) da puntos, pero los buscadores oyen de dónde viene.
+6. **Buscadores:** salen cuando acaba la cuenta atrás. Disparad a los objetos sospechosos. Si aciertas a un jugador: +10 por impacto y +100 al pillarlo (3 impactos). Si disparas a un objeto de verdad pierdes vida y, si llegas a 0, te mareas 5 segundos.
+7. Si está activada la opción, los pillados (también los bots) se convierten en buscadores y salen a cazar a los demás.
+8. En el **último minuto** los escondidos hacen ruido solos cada 20 segundos (se puede desactivar en la sala).
+9. Al acabar la ronda sale un **resumen**: quién pilló a quién, quién sobrevivió y de qué iba disfrazado, y cómo va la clasificación.
+10. **Gana la partida quien tenga más puntos** al final de todas las rondas (con podio y confeti 🏆).
+
+Durante la partida, `Esc` (o ⚙️ en el móvil) abre el **menú**: marcador, ajustes (sensibilidad, volumen, campo de visión,
+calidad gráfica, invertir ratón, FPS), controles e invitar amigos. Los ajustes se guardan en tu navegador.
+
+### Bots 🤖
+
+Los bots juegan de verdad: corren a esconderse junto a objetos del mismo tipo, se disfrazan, huyen si les disparas y hacen
+ruido de vez en cuando. Cuando les toca buscar (o los pillan y se convierten en buscadores), patrullan el mapa, se fijan en
+lo que se mueve o no encaja, van hacia los ruidos y disparan. Hay tres niveles: **fácil**, **normal** y **difícil**.
 
 Si a alguien se le corta la conexión o recarga la página, vuelve solo a su sitio con sus puntos (se le guarda un minuto).
 Quien llega mientras los demás se están escondiendo entra directamente como escondido.
@@ -48,6 +61,7 @@ Quien llega mientras los demás se están escondiendo entra directamente como es
 | --- | --- | --- |
 | Moverse | `WASD` / flechas | Joystick (lado izquierdo) |
 | Mirar | Ratón (haz clic para capturarlo) | Arrastra en el lado derecho |
+| Menú (pausa, ajustes, invitar) | `Esc` | ⚙️ |
 | Saltar / correr | `Espacio` / `Shift` | ⤒ |
 | Disparar (buscador) | Clic izquierdo | 💦 |
 | Disfrazarse (escondido) | `E` o clic derecho | 🎭 |
@@ -76,7 +90,7 @@ Donde pone `<nombre>` puedes poner `todos`.
 | `/empezar` · `/terminar` · `/siguiente` · `/sala` | Empezar, terminar con ganador, saltar ronda, volver a la sala |
 | `/tiempo +30` | Suma o resta segundos al reloj |
 | `/radar [seg]` | Los buscadores ven dónde está cada escondido |
-| `/sonido <nombre>` | Obliga a alguien a hacer ruido |
+| `/sonido <nombre>` | Obliga a alguien a hacer ruido (mientras se busca) |
 | `/apagarluces [seg]` · `/encenderluces` | Apagón (los buscadores llevan linterna) |
 | `/fiesta [seg]` | Modo discoteca 🪩 |
 | `/congelar <nombre> [seg]` · `/descongelar <nombre>` | Congela a alguien |
@@ -90,7 +104,8 @@ Donde pone `<nombre>` puedes poner `todos`.
 | `/darpuntos <nombre> <n>` · `/quitarpuntos <nombre> <n>` | Puntos |
 | `/expulsar <nombre>` | Echa a alguien |
 | `/mapa casa\|almacen\|parque` · `/rondas <n>` | Ajustes |
-| `/bot [n]` · `/quitarbots` | Bots escondidos para practicar solo |
+| `/bot [n]` · `/quitarbots` | Añade o quita bots (se esconden y, si les toca, buscan) |
+| `/dificultad facil\|normal\|dificil` | Lo listos que son los bots |
 | `/anuncio <texto>` | Mensaje gigante en la pantalla de todos |
 | `/admin <nombre>` | Pasa el mando a otro jugador |
 
@@ -125,12 +140,15 @@ ya saldrá con esa dirección. Funciona mientras tengas el ordenador encendido (
 npm test
 ```
 
-Comprueba que cada objeto tiene su modelo 3D y que nada atraviesa paredes ni se solapa en los mapas. Después arranca
-el servidor y simula varios jugadores: crear sala, unirse, roles, disfraces, disparos, comandos de admin, fin de partida,
-expulsiones, reconexión, enlace corto y código QR.
+Comprueba que cada objeto tiene su modelo 3D, que nada atraviesa paredes ni se solapa en los mapas y que los bots pueden
+llegar andando a cualquier sitio. Después arranca el servidor y simula varios jugadores: crear sala, unirse, roles,
+disfraces, disparos, comandos de admin, fin de partida, expulsiones, reconexión, enlace corto y código QR. También juega
+con bots: que no atraviesen paredes, que un bot pillado se vuelva buscador, que un bot buscador pille a quien no se
+esconde bien, el resumen de la ronda y el ruido automático del último minuto.
 
 ## Estructura
 
 - `server.js` — servidor (salas, rondas, puntos y comandos de admin) con Express + Socket.IO.
-- `shared/` — mapas, objetos y colisiones (los usan servidor y navegador).
+- `bots.js` — la inteligencia de los bots (esconderse, huir, buscar, oír ruidos y disparar).
+- `shared/` — mapas, objetos, colisiones y el mapa de caminos de los bots (los usan servidor y navegador).
 - `public/` — la web: menús, HUD y motor 3D con Three.js. Todos los modelos están hechos con figuras básicas, sin archivos externos.

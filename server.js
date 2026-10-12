@@ -1,22 +1,43 @@
 // Servidor del Escondite 3D: salas, rondas, puntuaciones y comandos de administrador.
+import crypto from 'crypto';
 import express from 'express';
 import http from 'http';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
+import QRCode from 'qrcode';
 import { MAPS, MAP_KEYS } from './shared/maps.js';
 import { PROPS, PROP_KEYS, propFootprint } from './shared/props.js';
 import { buildColliders, findFreeSpot } from './shared/physics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
+// tiempo que se guarda el sitio de un jugador que pierde la conexión (recargar, cambiar de wifi a datos...)
+const RECONNECT_GRACE = Number(process.env.RECONNECT_GRACE_MS) || 60000;
 
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/shared', express.static(path.join(__dirname, 'shared')));
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules/three')));
 app.get('/health', (_req, res) => res.send('ok'));
+
+// enlace corto para invitar: /ABCD lleva directo a la sala ABCD
+app.get('/:code([a-zA-Z]{4})', (req, res) => res.redirect(`/?sala=${req.params.code.toUpperCase()}`));
+
+// direcciones en la red local, para cuando el admin juega desde su propio ordenador
+function lanIps() {
+  return Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
+}
+app.get('/api/lan', (_req, res) => res.json({ urls: lanIps().map((ip) => `http://${ip}:${PORT}`) }));
+
+// código QR del enlace de invitación
+app.get('/qr.svg', async (req, res) => {
+  const text = String(req.query.text || '');
+  if (!/^https?:\/\/\S{1,200}$/.test(text)) return res.status(400).send('Enlace no válido');
+  const svg = await QRCode.toString(text, { type: 'svg', margin: 1, color: { dark: '#1b1f3b', light: '#ffffff' } });
+  res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(svg);
+});
 
 const server = http.createServer(app);
 const io = new Server(server);
@@ -38,6 +59,9 @@ const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toL
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const now = () => Date.now();
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const newId = () => `p${crypto.randomBytes(6).toString('hex')}`;
+// clave secreta que guarda cada navegador para poder volver a su sitio si se corta la conexión
+const validKey = (k) => typeof k === 'string' && /^[\w-]{8,64}$/.test(k);
 
 function makeCode() {
   const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -69,11 +93,11 @@ function findProp(query) {
 }
 
 // ------------------------------------------------------------------ salas
-function createRoom(hostSocket, name, color) {
+function createRoom(name, color) {
   const code = makeCode();
   const room = {
     code,
-    hostId: hostSocket.id,
+    hostId: null,
     players: new Map(),
     state: 'lobby',
     round: 0,
@@ -85,8 +109,9 @@ function createRoom(hostSocket, name, color) {
     ranking: null,
   };
   rooms.set(code, room);
-  addPlayer(room, hostSocket.id, name, color);
-  return room;
+  const host = addPlayer(room, newId(), name, color);
+  room.hostId = host.id;
+  return { room, host };
 }
 
 function addPlayer(room, id, name, color, isBot = false) {
@@ -115,6 +140,10 @@ function addPlayer(room, id, name, color, isBot = false) {
     lastShot: 0,
     lastTaunt: 0,
     lastDisguise: 0,
+    key: null,
+    sid: null,
+    connected: true,
+    disconnectedAt: 0,
   };
   room.players.set(id, p);
   if (room.state !== 'lobby') {
@@ -141,6 +170,7 @@ function publicRoom(room) {
       id: p.id, name: p.name, color: p.color, isBot: p.isBot, role: p.role, alive: p.alive,
       prop: p.prop, score: p.score, hp: p.hp, catches: p.catches,
       frozenUntil: p.frozenUntil, stunnedUntil: p.stunnedUntil, speed: p.speed, scale: p.scale,
+      connected: p.connected,
     })),
   };
 }
@@ -194,11 +224,13 @@ function nextRound(room) {
   const colliders = COLLIDERS[room.settings.map];
   const all = [...room.players.values()];
   const humans = all.filter((p) => !p.isBot);
+  // quien está reconectándose no puede ser buscador (se quedaría la ronda sin nadie buscando)
+  const online = humans.filter((p) => p.connected);
 
   let nSeekers = room.settings.seekers > 0 ? room.settings.seekers : Math.max(1, Math.floor(all.length / 4));
   nSeekers = clamp(nSeekers, 1, Math.max(1, humans.length > 1 ? humans.length - 1 : 1));
   // los bots siempre se esconden; buscan los humanos que menos veces hayan buscado
-  const candidates = humans.slice().sort((a, b) => a.seekerCount - b.seekerCount || Math.random() - 0.5);
+  const candidates = (online.length ? online : humans).slice().sort((a, b) => a.seekerCount - b.seekerCount || Math.random() - 0.5);
   const seekers = new Set(candidates.slice(0, nSeekers).map((p) => p.id));
   if (all.length === 1) seekers.clear(); // un solo jugador: se esconde para probar
 
@@ -301,6 +333,27 @@ function backToLobby(room) {
   sendRoom(room);
 }
 
+// saca a un jugador de la sala (se va, lo expulsan o no vuelve a tiempo tras perder la conexión)
+function removePlayer(room, p, msg) {
+  room.players.delete(p.id);
+  const humans = [...room.players.values()].filter((q) => !q.isBot);
+  if (!humans.length) {
+    rooms.delete(room.code);
+    return;
+  }
+  if (msg) sysChat(room, msg);
+  if (room.hostId === p.id) {
+    const next = humans.find((q) => q.connected) || humans[0];
+    room.hostId = next.id;
+    sysChat(room, `👑 ${next.name} es ahora el administrador.`);
+  }
+  if (room.state === 'hiding' || room.state === 'seeking') {
+    if (aliveHiders(room).length === 0) endRound(room, 'seekers');
+    else if (!participants(room).some((q) => q.role === 'seeker')) endRound(room, 'hiders', 'No quedan buscadores');
+  }
+  sendRoom(room);
+}
+
 function catchHider(room, hider, by) {
   hider.hp = 0;
   if (by) { by.score += 100; by.catches++; }
@@ -323,6 +376,10 @@ function catchHider(room, hider, by) {
 function tick() {
   const t = now();
   for (const room of rooms.values()) {
+    for (const p of [...room.players.values()]) {
+      if (!p.isBot && !p.connected && t - p.disconnectedAt > RECONNECT_GRACE) removePlayer(room, p, `${p.name} se ha ido (no ha vuelto a conectarse).`);
+    }
+    if (!rooms.has(room.code)) continue;
     if (room.state === 'hiding' && t >= room.endAt) {
       room.state = 'seeking';
       room.endAt = t + room.settings.seekTime * 1000;
@@ -616,15 +673,13 @@ function runCommand(room, admin, line) {
     case 'kick': {
       for (const p of needTargets()) {
         if (p.id === admin.id) continue;
-        sysChat(room, `${p.name} ha sido expulsado.`);
         if (!p.isBot) {
           io.to(p.id).emit('kicked');
-          const s = io.sockets.sockets.get(p.id);
-          if (s) { s.leave(room.code); s.data.room = null; }
+          const s = p.sid && io.sockets.sockets.get(p.sid);
+          if (s) unbindSocket(s, room, p);
         }
-        room.players.delete(p.id);
+        removePlayer(room, p, `${p.name} ha sido expulsado.`);
       }
-      sendRoom(room);
       return;
     }
     case 'mapa': {
@@ -681,36 +736,92 @@ function runCommand(room, admin, line) {
 }
 
 // ------------------------------------------------------------------ conexiones
+// Cada jugador tiene un id fijo; su conexión puede cambiar si recarga la página o se le corta.
+// Cada conexión entra en la sala de socket.io de su sala y en la de su propio id (para mensajes privados).
+function bindSocket(socket, room, p) {
+  if (p.sid && p.sid !== socket.id) {
+    const old = io.sockets.sockets.get(p.sid);
+    if (old) unbindSocket(old, room, p);
+  }
+  p.sid = socket.id;
+  p.connected = true;
+  p.disconnectedAt = 0;
+  socket.join(room.code);
+  socket.join(p.id);
+  socket.data.room = room.code;
+  socket.data.pid = p.id;
+}
+
+function unbindSocket(socket, room, p) {
+  socket.leave(room.code);
+  socket.leave(p.id);
+  socket.data.room = null;
+  socket.data.pid = null;
+}
+
+const findByKey = (room, key) => (validKey(key) ? [...room.players.values()].find((q) => q.key === key) : null);
+
 io.on('connection', (socket) => {
   const getRoom = () => (socket.data.room ? rooms.get(socket.data.room) : null);
-  const me = () => getRoom()?.players.get(socket.id);
+  const me = () => getRoom()?.players.get(socket.data.pid);
+  const isHost = (room) => room.hostId === socket.data.pid;
 
-  socket.on('create', ({ name, color } = {}, cb) => {
+  // devuelve a su sitio a un jugador que ya estaba en la sala (misma clave)
+  function resume(room, p, cb) {
+    if (socket.data.room && (socket.data.room !== room.code || socket.data.pid !== p.id)) leave();
+    const wasAway = !p.connected;
+    bindSocket(socket, room, p);
+    cb?.({ ok: true, code: room.code, id: p.id });
+    if (wasAway) sysChat(room, `📶 ${p.name} ha vuelto.`);
+    sendRoom(room);
+    if (room.state !== 'lobby') socket.emit('spawn', { pos: p.pos, rot: p.rot, propRot: p.propRot });
+  }
+
+  socket.on('create', ({ name, color, key } = {}, cb) => {
     leave();
-    const room = createRoom(socket, name, color);
-    socket.join(room.code);
-    socket.data.room = room.code;
-    cb?.({ ok: true, code: room.code, id: socket.id });
-    sysChat(room, `👑 ${me().name} ha creado la sala.`);
+    const { room, host } = createRoom(name, color);
+    host.key = validKey(key) ? key : null;
+    bindSocket(socket, room, host);
+    cb?.({ ok: true, code: room.code, id: host.id });
+    sysChat(room, `👑 ${host.name} ha creado la sala.`);
     sendRoom(room);
   });
 
-  socket.on('join', ({ code, name, color } = {}, cb) => {
+  socket.on('join', ({ code, name, color, key } = {}, cb) => {
     const room = rooms.get(String(code || '').toUpperCase().trim());
     if (!room) return cb?.({ ok: false, error: 'No existe ninguna sala con ese código.' });
+    const mine = findByKey(room, key);
+    if (mine) return resume(room, mine, cb);
     if (room.players.size >= 16) return cb?.({ ok: false, error: 'La sala está llena (máximo 16).' });
     leave();
-    socket.join(room.code);
-    socket.data.room = room.code;
-    const p = addPlayer(room, socket.id, name, color);
-    cb?.({ ok: true, code: room.code, id: socket.id });
-    sysChat(room, `${p.name} se ha unido.${p.role === 'spectator' ? ' (jugará la próxima ronda)' : ''}`);
+    const p = addPlayer(room, newId(), name, color);
+    p.key = validKey(key) ? key : null;
+    bindSocket(socket, room, p);
+    // si todavía se están escondiendo, entra directamente como escondido
+    if (room.state === 'hiding') {
+      const map = MAPS[room.settings.map];
+      const [sx, sz] = pick(map.spawns.hider);
+      const [x, z] = findFreeSpot(COLLIDERS[room.settings.map], sx, sz, 0.4, 1.8);
+      Object.assign(p, { role: 'hider', alive: true, hp: HIDER_HP, pos: [x, 0, z], rot: faceCenter(map, x, z) });
+    }
+    cb?.({ ok: true, code: room.code, id: p.id });
+    const note = p.role === 'hider' ? ' ¡Corre a esconderte!' : p.role === 'spectator' ? ' (jugará la próxima ronda)' : '';
+    sysChat(room, `${p.name} se ha unido.${note}`);
     sendRoom(room);
+    if (room.state !== 'lobby') socket.emit('spawn', { pos: p.pos, rot: p.rot });
+  });
+
+  // al recargar la página o volver la conexión, el navegador pide su sitio con su clave
+  socket.on('rejoin', ({ code, key } = {}, cb) => {
+    const room = rooms.get(String(code || '').toUpperCase().trim());
+    const p = room && findByKey(room, key);
+    if (!p) return cb?.({ ok: false, error: 'Esa partida ya no existe.', roomExists: !!room });
+    resume(room, p, cb);
   });
 
   socket.on('settings', (s = {}) => {
     const room = getRoom();
-    if (!room || room.hostId !== socket.id) return;
+    if (!room || !isHost(room)) return;
     const st = room.settings;
     if (MAPS[s.map]) st.map = s.map;
     if (s.rounds !== undefined) st.rounds = clamp(parseInt(s.rounds, 10) || 3, 1, 20);
@@ -723,13 +834,13 @@ io.on('connection', (socket) => {
 
   socket.on('start', () => {
     const room = getRoom();
-    if (!room || room.hostId !== socket.id) return;
+    if (!room || !isHost(room)) return;
     if (room.state === 'lobby' || room.state === 'gameEnd') startGame(room);
   });
 
   socket.on('backToLobby', () => {
     const room = getRoom();
-    if (room && room.hostId === socket.id) backToLobby(room);
+    if (room && isHost(room)) backToLobby(room);
   });
 
   socket.on('state', (d) => {
@@ -800,7 +911,7 @@ io.on('connection', (socket) => {
     const msg = String(text || '').slice(0, 200).trim();
     if (!msg) return;
     if (msg.startsWith('/')) {
-      if (room.hostId !== socket.id) {
+      if (!isHost(room)) {
         socket.emit('chat', { system: true, kind: 'admin', text: 'Solo el administrador puede usar comandos.' });
         return;
       }
@@ -819,36 +930,35 @@ io.on('connection', (socket) => {
   });
 
   socket.on('leave', () => leave());
-  socket.on('disconnect', () => leave());
+
+  // si se corta la conexión le guardamos el sitio un rato por si vuelve
+  socket.on('disconnect', () => {
+    const room = getRoom();
+    const p = me();
+    if (!room || !p || p.sid !== socket.id) return;
+    if (!p.key) return leave();
+    p.connected = false;
+    p.disconnectedAt = now();
+    sysChat(room, `📶 ${p.name} ha perdido la conexión… le guardamos el sitio ${Math.round(RECONNECT_GRACE / 1000)} s.`);
+    sendRoom(room);
+  });
 
   function leave() {
     const room = getRoom();
     if (!room) return;
-    const p = room.players.get(socket.id);
-    room.players.delete(socket.id);
-    socket.leave(room.code);
-    socket.data.room = null;
-    const humans = [...room.players.values()].filter((q) => !q.isBot);
-    if (!humans.length) {
-      rooms.delete(room.code);
+    const p = me();
+    if (!p) {
+      socket.leave(room.code);
+      socket.data.room = null;
       return;
     }
-    if (p) sysChat(room, `${p.name} se ha ido.`);
-    if (room.hostId === socket.id) {
-      room.hostId = humans[0].id;
-      sysChat(room, `👑 ${humans[0].name} es ahora el administrador.`);
-    }
-    if ((room.state === 'hiding' || room.state === 'seeking')) {
-      if (aliveHiders(room).length === 0) endRound(room, 'seekers');
-      else if (!participants(room).some((q) => q.role === 'seeker')) endRound(room, 'hiders', 'No quedan buscadores');
-    }
-    sendRoom(room);
+    unbindSocket(socket, room, p);
+    removePlayer(room, p, `${p.name} se ha ido.`);
   }
 });
 
 server.listen(PORT, () => {
-  const ips = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
   console.log(`\n  🎮 Escondite 3D listo en http://localhost:${PORT}`);
-  for (const ip of ips) console.log(`     Tus amigos (misma wifi): http://${ip}:${PORT}`);
+  for (const ip of lanIps()) console.log(`     Tus amigos (misma wifi): http://${ip}:${PORT}`);
   console.log('');
 });

@@ -8,17 +8,24 @@ const PORT = 3999;
 const URL = `http://localhost:${PORT}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const server = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT }, stdio: ['ignore', 'pipe', 'inherit'] });
+// el sitio de quien pierde la conexión se guarda 1,5 s en las pruebas (60 s en el juego de verdad)
+const GRACE = 1500;
+const server = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT, RECONNECT_GRACE_MS: GRACE }, stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise((resolve) => server.stdout.on('data', (d) => d.toString().includes('listo') && resolve()));
 
-function client(name) {
+// cada cliente es como una pestaña del navegador, con su clave secreta para reconectar
+function client(name, key = `clave-${name}-${Math.random().toString(36).slice(2)}`) {
   const s = io(URL, { transports: ['websocket'], forceNew: true });
-  const c = { s, name, room: null, chat: [], fx: [] };
+  const c = { s, name, key, id: null, room: null, chat: [], fx: [], spawns: [] };
   s.on('room', (r) => { c.room = r; });
   s.on('chat', (m) => c.chat.push(m));
   s.on('fx', (e) => c.fx.push(e));
-  c.emit = (ev, data) => new Promise((res) => s.emit(ev, data, res));
-  c.me = () => c.room.players.find((p) => p.id === s.id);
+  s.on('spawn', (d) => c.spawns.push(d));
+  c.emit = (ev, data) => new Promise((res) => {
+    const payload = ['create', 'join', 'rejoin'].includes(ev) ? { key: c.key, ...data } : data;
+    s.emit(ev, payload, (r) => { if (r?.ok && r.id) c.id = r.id; res(r); });
+  });
+  c.me = () => c.room.players.find((p) => p.id === c.id);
   c.player = (n) => c.room.players.find((p) => p.name === n);
   return c;
 }
@@ -49,7 +56,7 @@ try {
     assert.equal(bad.ok, false);
     await sleep(200);
     assert.equal(admin.room.players.length, 3);
-    assert.equal(admin.room.hostId, admin.s.id);
+    assert.equal(admin.room.hostId, admin.id);
   });
 
   await step('solo el admin puede usar comandos', async () => {
@@ -90,7 +97,7 @@ try {
   });
 
   await step('el buscador no puede disparar mientras se esconden', async () => {
-    seeker.s.emit('shoot', { kind: 'player', target: hiders[0].s.id });
+    seeker.s.emit('shoot', { kind: 'player', target: hiders[0].id });
     await sleep(200);
     assert.equal(seeker.player(hiders[0].name).hp, 100);
   });
@@ -108,7 +115,7 @@ try {
 
   await step('3 disparos pillan a un escondido y se convierte en buscador', async () => {
     for (let i = 0; i < 3; i++) {
-      seeker.s.emit('shoot', { kind: 'player', target: hiders[0].s.id, from: [0, 1, 0], to: [1, 1, 1] });
+      seeker.s.emit('shoot', { kind: 'player', target: hiders[0].id, from: [0, 1, 0], to: [1, 1, 1] });
       await sleep(320);
     }
     await sleep(100);
@@ -161,20 +168,86 @@ try {
     assert.ok(!admin.player('Luis'));
   });
 
-  await step('si el admin se va, otro jugador pasa a ser admin', async () => {
+  let ana2;
+  await step('si se le corta la conexión vuelve a su sitio con sus puntos', async () => {
+    const before = admin.player('Ana');
+    ana.s.disconnect();
+    await sleep(250);
+    assert.equal(admin.player('Ana')?.connected, false, 'se le guarda el sitio');
+    ana2 = client('Ana', ana.key); // misma pestaña, conexión nueva
+    const r = await ana2.emit('rejoin', { code });
+    assert.ok(r.ok);
+    assert.equal(r.id, before.id);
+    await sleep(200);
+    assert.equal(admin.player('Ana').connected, true);
+    assert.equal(admin.player('Ana').score, before.score);
+    // volver a pulsar "Entrar" con la misma clave no duplica al jugador
+    const n = admin.room.players.length;
+    assert.ok((await ana2.emit('join', { code, name: 'Ana' })).ok);
+    await sleep(150);
+    assert.equal(admin.room.players.length, n);
+    const bad = await client('Nadie').emit('rejoin', { code, key: 'clave-que-no-existe' });
+    assert.equal(bad.ok, false);
+  });
+
+  await step('salir con el botón quita al jugador al momento', async () => {
+    const eva = client('Eva');
+    assert.ok((await eva.emit('join', { code, name: 'Eva' })).ok);
+    await sleep(150);
+    assert.ok(admin.player('Eva'));
+    eva.s.emit('leave');
+    await sleep(200);
+    assert.ok(!admin.player('Eva'));
+    eva.s.disconnect();
+  });
+
+  await step('si el admin no vuelve a tiempo, otro jugador pasa a ser admin', async () => {
+    const adminId = admin.id;
     admin.s.disconnect();
     await sleep(300);
-    assert.equal(ana.room.hostId, ana.s.id);
+    assert.equal(ana2.room.hostId, adminId, 'mientras se le espera sigue siendo admin');
+    await sleep(GRACE + 600);
+    assert.equal(ana2.room.hostId, ana2.id);
+    assert.ok(!ana2.room.players.some((p) => p.id === adminId));
+  });
+
+  await step('quien entra mientras se esconden juega ya como escondido', async () => {
+    const sara = client('Sara');
+    const r = await sara.emit('create', { name: 'Sara' });
+    sara.s.emit('settings', { hideTime: 30 });
+    sara.s.emit('start');
+    await sleep(250);
+    assert.equal(sara.room.state, 'hiding');
+    const marta = client('Marta');
+    assert.ok((await marta.emit('join', { code: r.code, name: 'Marta' })).ok);
+    await sleep(200);
+    assert.equal(marta.me().role, 'hider');
+    assert.equal(marta.spawns.length, 1, 'recibe dónde aparecer');
+    sara.s.disconnect();
+    marta.s.disconnect();
+  });
+
+  await step('enlace corto, código QR y dirección de la red local', async () => {
+    const short = await fetch(`${URL}/abcd`, { redirect: 'manual' });
+    assert.equal(short.status, 302);
+    assert.equal(short.headers.get('location'), '/?sala=ABCD');
+    const qr = await fetch(`${URL}/qr.svg?text=${encodeURIComponent('https://escondite-3d.onrender.com/ABCD')}`);
+    assert.equal(qr.status, 200);
+    assert.match(qr.headers.get('content-type'), /image\/svg\+xml/);
+    assert.match(await qr.text(), /<svg/);
+    assert.equal((await fetch(`${URL}/qr.svg?text=hola`)).status, 400);
+    const lan = await (await fetch(`${URL}/api/lan`)).json();
+    assert.ok(Array.isArray(lan.urls));
   });
 
   await step('la web y los archivos 3D se sirven', async () => {
-    for (const path of ['/', '/js/main.js', '/js/game.js', '/shared/maps.js', '/vendor/three/build/three.module.js']) {
+    for (const path of ['/', '/js/main.js', '/js/game.js', '/shared/maps.js', '/vendor/three/build/three.module.js', '/health']) {
       const r = await fetch(URL + path);
       assert.equal(r.status, 200, path);
     }
   });
 
-  ana.s.disconnect();
+  ana2.s.disconnect();
   luis.s.disconnect();
 } finally {
   server.kill();

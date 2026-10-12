@@ -22,19 +22,32 @@
     <div class="menu-card">
       <h1 class="logo">ESCONDITE<span>3D</span></h1>
       <p class="tagline">Disfrázate de cualquier objeto… ¡y que no te pillen!</p>
-      <label class="field">
-        <span>Tu nombre</span>
-        <input id="in-name" maxlength="16" placeholder="Escribe tu nombre" autocomplete="off" />
-      </label>
-      <div class="field">
-        <span>Tu color</span>
-        <div id="color-picker" class="colors"></div>
-      </div>
-      <button id="btn-create" class="btn big primary">👑 Crear sala (serás el admin)</button>
-      <div class="or">o únete a la de un amigo</div>
-      <div class="join-row">
-        <input id="in-code" maxlength="4" placeholder="CÓDIGO" autocomplete="off" />
-        <button id="btn-join" class="btn big">Unirse</button>
+      <p id="menu-status" class="menu-status hidden">🔄 Volviendo a tu partida…</p>
+      <div id="menu-form">
+        <div id="invite-banner" class="invite-banner hidden">
+          <div>🎉 ¡Te han invitado a jugar!</div>
+          <div class="muted">Sala <b id="invite-code">----</b></div>
+        </div>
+        <label class="field">
+          <span>Tu nombre</span>
+          <input id="in-name" maxlength="16" placeholder="Escribe tu nombre" autocomplete="off" />
+        </label>
+        <div class="field">
+          <span>Tu color</span>
+          <div id="color-picker" class="colors"></div>
+        </div>
+        <div id="menu-invite" class="hidden">
+          <button id="btn-enter" class="btn big primary">🎮 ¡Entrar a jugar!</button>
+          <button id="btn-own-room" class="link-btn">o crea tu propia sala</button>
+        </div>
+        <div id="menu-normal">
+          <button id="btn-create" class="btn big primary">👑 Crear sala (serás el admin)</button>
+          <div class="or">o únete a la de un amigo</div>
+          <div class="join-row">
+            <input id="in-code" maxlength="4" placeholder="CÓDIGO" autocomplete="off" />
+            <button id="btn-join" class="btn big">Unirse</button>
+          </div>
+        </div>
       </div>
       <p id="menu-error" class="error"></p>
       <details class="howto">
@@ -56,19 +69,34 @@
     <div class="menu-bg"></div>
     <div class="lobby">
       <header class="lobby-head">
-        <div>
+        <div class="lobby-code-box">
           <div class="muted">Código de la sala</div>
           <div id="lobby-code" class="code">----</div>
+          <button id="btn-leave" class="btn ghost small-btn">Salir</button>
         </div>
-        <div class="lobby-share">
-          <button id="btn-copy" class="btn">🔗 Copiar enlace</button>
-          <button id="btn-leave" class="btn ghost">Salir</button>
+        <div class="invite">
+          <img id="invite-qr" class="qr" alt="Código QR para unirse a la sala" />
+          <div class="invite-body">
+            <div class="invite-title">📲 Invita a tus amigos: que abran este enlace o escaneen el QR</div>
+            <input id="invite-url" class="invite-url" readonly />
+            <div class="invite-buttons">
+              <button id="btn-copy" class="btn">📋 Copiar enlace</button>
+              <a id="btn-whatsapp" class="btn whatsapp" target="_blank" rel="noopener">💬 WhatsApp</a>
+              <button id="btn-share" class="btn hidden">📤 Compartir</button>
+            </div>
+            <div id="invite-note" class="invite-note hidden"></div>
+          </div>
         </div>
       </header>
       <div class="lobby-grid">
         <div class="panel">
           <h3>Jugadores <span id="lobby-count" class="pill">0</span></h3>
           <ul id="lobby-players" class="players"></ul>
+          <p id="lobby-alone" class="muted small hidden">Todavía estás solo. Pasa el enlace de arriba a tus amigos 👆</p>
+          <div id="host-tools" class="host-tools hidden">
+            <button id="btn-add-bot" class="btn">🤖 Añadir bot</button>
+            <button id="btn-remove-bots" class="btn ghost">Quitar bots</button>
+          </div>
         </div>
         <div class="panel">
           <h3>Mapa</h3>
@@ -226,6 +254,7 @@
       <div class="sheet-head"><h2>Ajustes</h2><button class="btn ghost close" data-close="pause">✕</button></div>
       <label class="slider">Sensibilidad <input type="range" id="sens" min="0.3" max="3" step="0.1" /></label>
       <label class="check"><input type="checkbox" id="mute" /> Silenciar sonido</label>
+      <button id="btn-invite-game" class="btn">📲 Invitar a más amigos</button>
       <button id="btn-quit" class="btn danger">Salir de la sala</button>
     </div>
   </div>
@@ -245,6 +274,8 @@
     </div>
     <div id="confetti"></div>
   </section>
+
+  <div id="net-banner" class="net-banner hidden">📶 Se ha cortado la conexión. Reconectando…</div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script type="module" src="/js/main.js"></script>

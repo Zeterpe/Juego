@@ -19,6 +19,16 @@ let prevRoom = null;
 let myColor = localStorage.getItem('color') || COLORS[Math.floor(Math.random() * COLORS.length)];
 let lastCountdown = null;
 
+// sessionStorage es de esta pestaña: si recarga sigue siendo el mismo jugador, otra pestaña es otro jugador
+const store = {
+  get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* modo privado */ } },
+  del: (k) => { try { sessionStorage.removeItem(k); } catch { /* modo privado */ } },
+};
+// clave secreta para recuperar tu sitio si recargas la página o se corta la conexión
+const KEY = store.get('key') || [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
+store.set('key', KEY);
+
 const game = new Game($('game'), input, {
   sendState: (s) => socket.volatile.emit('state', s),
   shoot: (d) => socket.emit('shoot', d),
@@ -30,9 +40,42 @@ const game = new Game($('game'), input, {
 });
 
 // ------------------------------------------------------------ menú
+const FUN_NOUNS = ['Pingüino', 'Mapache', 'Calcetín', 'Pepino', 'Churro', 'Panda', 'Gnomo', 'Bigote', 'Pato', 'Erizo', 'Koala', 'Dragón', 'Ratón', 'Plátano', 'Fantasma', 'Cactus'];
+const FUN_ADJS = ['Ninja', 'Veloz', 'Loco', 'Feliz', 'Sigiloso', 'Valiente', 'Dormilón', 'Saltarín', 'Secreto', 'Turbo', 'Molón', 'Invisible'];
+const pickOne = (a) => a[Math.floor(Math.random() * a.length)];
+function funName() {
+  for (;;) {
+    const n = `${pickOne(FUN_NOUNS)} ${pickOne(FUN_ADJS)}`;
+    if (n.length <= 16) return n;
+  }
+}
+
 $('in-name').value = localStorage.getItem('name') || '';
 const params = new URLSearchParams(location.search);
-if (params.get('sala')) $('in-code').value = params.get('sala').toUpperCase();
+let inviteCode = (params.get('sala') || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+// si esta pestaña ya estaba en esa sala (ha recargado la página), vuelve a entrar sola
+let rejoining = inviteCode.length === 4 && store.get('sala') === inviteCode;
+
+// normal: crear o unirse · invite: llegó con un enlace de invitación · rejoin: volviendo a su partida
+function menuMode(mode, code) {
+  if (code) inviteCode = code;
+  $('menu-status').classList.toggle('hidden', mode !== 'rejoin');
+  $('menu-form').classList.toggle('hidden', mode === 'rejoin');
+  $('invite-banner').classList.toggle('hidden', mode !== 'invite');
+  $('menu-invite').classList.toggle('hidden', mode !== 'invite');
+  $('menu-normal').classList.toggle('hidden', mode === 'invite');
+  if (mode === 'invite') {
+    $('invite-code').textContent = inviteCode;
+    $('in-code').value = inviteCode;
+    if (!$('in-name').value) $('in-name').value = funName();
+  }
+}
+menuMode(rejoining ? 'rejoin' : inviteCode.length === 4 ? 'invite' : 'normal');
+$('btn-own-room').onclick = () => {
+  menuMode('normal');
+  $('in-code').value = '';
+  history.replaceState(null, '', '/');
+};
 
 function renderColors() {
   $('color-picker').innerHTML = COLORS.map((c) => `<button style="background:${c}" data-c="${c}" class="${c === myColor ? 'sel' : ''}" aria-label="color"></button>`).join('');
@@ -53,30 +96,34 @@ function getName() {
   return n;
 }
 
+function entered(res) {
+  if (!res.ok) { $('menu-error').textContent = res.error; return; }
+  myId = res.id;
+  store.set('sala', res.code);
+  history.replaceState(null, '', `?sala=${res.code}`);
+  $('menu-error').textContent = '';
+}
 $('btn-create').onclick = () => {
   unlockAudio();
   const name = getName();
   if (!name) return;
-  socket.emit('create', { name, color: myColor }, (res) => {
-    if (!res.ok) { $('menu-error').textContent = res.error; return; }
-    myId = res.id;
-    history.replaceState(null, '', `?sala=${res.code}`);
-  });
+  socket.emit('create', { name, color: myColor, key: KEY }, entered);
 };
-$('btn-join').onclick = () => {
+function join(code) {
   unlockAudio();
   const name = getName();
   if (!name) return;
-  const code = $('in-code').value.trim().toUpperCase();
   if (code.length !== 4) { $('menu-error').textContent = 'El código tiene 4 letras.'; return; }
-  socket.emit('join', { code, name, color: myColor }, (res) => {
-    if (!res.ok) { $('menu-error').textContent = res.error; return; }
-    myId = res.id;
-    history.replaceState(null, '', `?sala=${res.code}`);
-  });
-};
+  socket.emit('join', { code, name, color: myColor, key: KEY }, entered);
+}
+$('btn-join').onclick = () => join($('in-code').value.trim().toUpperCase());
+$('btn-enter').onclick = () => join(inviteCode);
 $('in-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-join').click(); });
-$('in-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') ($('in-code').value ? $('btn-join') : $('btn-create')).click(); });
+$('in-name').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  if (!$('menu-invite').classList.contains('hidden')) $('btn-enter').click();
+  else ($('in-code').value ? $('btn-join') : $('btn-create')).click();
+});
 
 // ------------------------------------------------------------ sala de espera
 const isHost = () => room && room.hostId === myId;
@@ -89,14 +136,19 @@ function renderLobby() {
   $('lobby-code').textContent = room.code;
   $('lobby-count').textContent = room.players.length;
   $('lobby-players').innerHTML = room.players.map((p) => `
-    <li class="${p.id === myId ? 'me' : ''}">
+    <li class="${p.id === myId ? 'me' : ''} ${p.connected === false ? 'away' : ''}">
       <span class="dot" style="background:${p.color}"></span>
       <span class="name">${esc(p.name)}</span>
       ${p.id === room.hostId ? '<span class="tag">👑 Admin</span>' : ''}
       ${p.isBot ? '<span class="tag">🤖</span>' : ''}
+      ${p.connected === false ? '<span class="tag">📶 reconectando…</span>' : ''}
       ${p.id === myId ? '<span class="tag">Tú</span>' : ''}
     </li>`).join('');
   const host = isHost();
+  renderInvite();
+  $('lobby-alone').classList.toggle('hidden', room.players.filter((p) => !p.isBot).length > 1);
+  $('host-tools').classList.toggle('hidden', !host);
+  $('btn-remove-bots').classList.toggle('hidden', !room.players.some((p) => p.isBot));
   $('map-cards').innerHTML = MAP_KEYS.map((k) => {
     const [icon, bg] = MAP_ICONS[k];
     return `<button class="map-card ${room.settings.map === k ? 'sel' : ''}" data-map="${k}" ${host ? '' : 'disabled'}>
@@ -123,14 +175,70 @@ $('set-seek').onchange = (e) => socket.emit('settings', { seekTime: e.target.val
 $('set-seekers').onchange = (e) => socket.emit('settings', { seekers: e.target.value });
 $('set-infection').onchange = (e) => socket.emit('settings', { infection: e.target.checked });
 $('btn-start').onclick = () => { unlockAudio(); socket.emit('start'); };
-$('btn-copy').onclick = async () => {
-  const url = `${location.origin}/?sala=${room.code}`;
+$('btn-add-bot').onclick = () => socket.emit('chat', '/bot 1');
+$('btn-remove-bots').onclick = () => socket.emit('chat', '/quitarbots');
+
+// ------------------------------------------------------------ invitar amigos
+// enlace corto tipo https://escondite-3d.onrender.com/ABCD (el servidor lo lleva a la sala)
+const onMyComputer = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+let shareBase = location.origin;
+if (onMyComputer) {
+  // "localhost" solo funciona en tu ordenador: para los amigos usamos la IP de tu wifi
+  fetch('/api/lan').then((r) => r.json()).then(({ urls }) => {
+    if (urls?.length) { shareBase = urls[0]; if (room) renderInvite(); }
+  }).catch(() => {});
+}
+const inviteUrl = () => `${shareBase}/${room.code}`;
+const inviteText = () => `¡Vente a jugar al Escondite 3D conmigo! 🙈 Entra aquí: ${inviteUrl()}`;
+
+let invitedFor = '';
+function renderInvite() {
+  const url = inviteUrl();
+  if (invitedFor === url) return;
+  invitedFor = url;
+  $('invite-url').value = url;
+  $('invite-qr').src = `/qr.svg?text=${encodeURIComponent(url)}`;
+  $('btn-whatsapp').href = `https://wa.me/?text=${encodeURIComponent(inviteText())}`;
+  $('btn-share').classList.toggle('hidden', !navigator.share);
+  let note = '';
+  if (onMyComputer) {
+    note = shareBase === location.origin
+      ? 'Estás jugando desde tu ordenador sin conexión a una red: tus amigos no podrán entrar.'
+      : 'Este enlace solo funciona con amigos conectados a tu misma wifi. Para jugar cada uno desde su casa, publica el juego en internet (mira el README).';
+  }
+  $('invite-note').textContent = note;
+  $('invite-note').classList.toggle('hidden', !note);
+}
+
+async function copyInvite(btn) {
+  const url = inviteUrl();
   try {
-    if (navigator.share && isTouch) await navigator.share({ title: 'Escondite 3D', text: `¡Únete a mi sala ${room.code}!`, url });
-    else { await navigator.clipboard.writeText(url); $('btn-copy').textContent = '✅ ¡Copiado!'; setTimeout(() => { $('btn-copy').textContent = '🔗 Copiar enlace'; }, 1500); }
-  } catch { prompt('Copia este enlace:', url); }
+    await navigator.clipboard.writeText(url);
+  } catch {
+    // sin https el portapapeles no está disponible: probamos a la antigua o lo mostramos
+    $('invite-url').select();
+    if (!document.execCommand?.('copy')) { prompt('Copia este enlace y pásaselo a tus amigos:', url); return; }
+  }
+  const old = btn.textContent;
+  btn.textContent = '✅ ¡Copiado!';
+  setTimeout(() => { btn.textContent = old; }, 1500);
+}
+const shareInvite = () => navigator.share({ title: 'Escondite 3D', text: inviteText(), url: inviteUrl() }).catch(() => {});
+$('btn-copy').onclick = () => copyInvite($('btn-copy'));
+$('btn-share').onclick = shareInvite;
+$('invite-url').onclick = (e) => e.target.select();
+$('btn-invite-game').onclick = () => (navigator.share && isTouch ? shareInvite() : copyInvite($('btn-invite-game')));
+
+const leaveRoom = () => {
+  socket.emit('leave');
+  room = null;
+  myId = null;
+  store.del('sala');
+  history.replaceState(null, '', '/');
+  menuMode('normal');
+  showScreen('menu');
+  game.stop();
 };
-const leaveRoom = () => { socket.emit('leave'); room = null; history.replaceState(null, '', '/'); showScreen('menu'); game.stop(); };
 $('btn-leave').onclick = leaveRoom;
 $('btn-quit').onclick = () => { $('pause').classList.add('hidden'); leaveRoom(); };
 
@@ -232,7 +340,7 @@ function renderScoreboard() {
   const list = [...room.players].sort((a, b) => b.score - a.score);
   $('score-body').innerHTML = list.map((p, i) => `<tr>
     <td>${i + 1}</td>
-    <td><span class="dot" style="background:${p.color}"></span>${esc(p.name)}${p.id === room.hostId ? ' 👑' : ''}${p.id === myId ? ' (tú)' : ''}</td>
+    <td><span class="dot" style="background:${p.color}"></span>${esc(p.name)}${p.id === room.hostId ? ' 👑' : ''}${p.id === myId ? ' (tú)' : ''}${p.connected === false ? ' 📶' : ''}</td>
     <td class="role-${p.role}">${roleName(p)}</td>
     <td>${p.catches}</td>
     <td><b>${p.score}</b></td></tr>`).join('');
@@ -254,9 +362,9 @@ function showScreen(name) {
 const inGame = () => room && ['hiding', 'seeking', 'roundEnd'].includes(room.state);
 
 socket.on('room', (r) => {
+  if (!myId) return;
   prevRoom = room;
   room = r;
-  if (!myId) myId = socket.id;
   const me = r.players.find((p) => p.id === myId);
   if (!me) return;
   game.setRoom(r, myId);
@@ -287,7 +395,7 @@ input.onLockChange = (locked) => {
 };
 
 socket.on('snap', (list) => game.applySnapshot(list));
-socket.on('spawn', ({ pos, rot }) => game.spawn(pos, rot));
+socket.on('spawn', ({ pos, rot, propRot }) => game.spawn(pos, rot, propRot));
 socket.on('fx', (e) => {
   game.handleFx(e);
   if (e.type === 'announce') announce(e.title, e.text, e.big ? 4000 : 3000);
@@ -295,8 +403,48 @@ socket.on('fx', (e) => {
 });
 socket.on('toast', ({ text }) => toast(text));
 socket.on('forceProp', ({ prop }) => toast(`El admin te ha disfrazado de ${prop} 😂`));
-socket.on('kicked', () => { room = null; showScreen('menu'); game.stop(); $('menu-error').textContent = 'Te han expulsado de la sala.'; history.replaceState(null, '', '/'); });
-socket.on('disconnect', () => { if (room) { toast('Conexión perdida… recarga la página', true); } });
+socket.on('kicked', () => {
+  room = null;
+  myId = null;
+  store.del('sala');
+  menuMode('normal');
+  showScreen('menu');
+  game.stop();
+  $('menu-error').textContent = 'Te han expulsado de la sala.';
+  history.replaceState(null, '', '/');
+});
+
+// ------------------------------------------------------------ reconexión
+// socket.io reconecta solo; al volver pedimos nuestro sitio con la clave de esta pestaña
+socket.on('disconnect', () => { if (room) $('net-banner').classList.remove('hidden'); });
+socket.on('connect', () => {
+  const code = store.get('sala');
+  if (!code || (!room && !rejoining)) return;
+  socket.emit('rejoin', { code, key: KEY }, (res) => {
+    const wasLost = !$('net-banner').classList.contains('hidden');
+    $('net-banner').classList.add('hidden');
+    rejoining = false;
+    if (res.ok) {
+      myId = res.id;
+      if (wasLost) toast('¡Reconectado! 🎉');
+      return;
+    }
+    store.del('sala');
+    room = null;
+    myId = null;
+    game.stop();
+    showScreen('menu');
+    if (res.roomExists) {
+      // la sala sigue, pero estuvo fuera demasiado rato: un toque y vuelve a entrar
+      menuMode('invite', code);
+      $('menu-error').textContent = 'Has estado fuera un buen rato. Pulsa «¡Entrar a jugar!» para volver.';
+    } else {
+      menuMode('normal');
+      history.replaceState(null, '', '/');
+      $('menu-error').textContent = 'Esa partida ya no existe (puede que el servidor se haya reiniciado). Crea una sala nueva 🙂';
+    }
+  });
+});
 
 // ------------------------------------------------------------ HUD
 let announceTimer = null;

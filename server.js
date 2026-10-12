@@ -8,8 +8,9 @@ import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
 import QRCode from 'qrcode';
 import { MAPS, MAP_KEYS } from './shared/maps.js';
-import { PROPS, PROP_KEYS, propFootprint } from './shared/props.js';
+import { PROPS, PROP_KEYS } from './shared/props.js';
 import { buildColliders, findFreeSpot } from './shared/physics.js';
+import { createBots, BOT_LEVELS } from './bots.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -55,7 +56,9 @@ const HIDER_HP = 100;
 const SEEKER_HP = 100;
 const HIT_DAMAGE = 34;
 const WRONG_PENALTY = 10;
-const ROUND_END_TIME = 7000;
+const ROUND_END_TIME = 9000;
+const TAUNT_SOUNDS = 8; // sonidos distintos para hacer ruido (el navegador los sintetiza)
+const AUTO_TAUNT_EVERY = 20000; // en el último minuto los escondidos hacen ruido solos cada 20 s
 const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22', '#1abc9c', '#ff6b9d', '#95a5a6', '#34495e'];
 const BOT_NAMES = ['Bot Pepe', 'Bot Lola', 'Bot Paco', 'Bot Rosa', 'Bot Toni', 'Bot Luna', 'Bot Max', 'Bot Nora'];
 
@@ -110,10 +113,11 @@ function createRoom(name, color) {
     round: 0,
     endAt: 0,
     lastPointsAt: 0,
-    settings: { map: 'casa', rounds: 3, hideTime: 30, seekTime: 180, seekers: 0, infection: true },
+    settings: { map: 'casa', rounds: 3, hideTime: 30, seekTime: 180, seekers: 0, infection: true, botLevel: 'normal', autoTaunt: true },
     mods: { gravity: 1, lightsUntil: 0, partyUntil: 0, radarUntil: 0 },
     lastWinner: null,
     ranking: null,
+    summary: null,
   };
   rooms.set(code, room);
   const host = addPlayer(room, newId(), name, color);
@@ -173,6 +177,7 @@ function publicRoom(room) {
     mods: room.mods,
     lastWinner: room.lastWinner,
     ranking: room.ranking,
+    summary: room.state === 'roundEnd' ? room.summary : null,
     players: [...room.players.values()].map((p) => ({
       id: p.id, name: p.name, color: p.color, isBot: p.isBot, role: p.role, alive: p.alive,
       prop: p.prop, score: p.score, hp: p.hp, catches: p.catches,
@@ -201,7 +206,8 @@ function feed(room, text, icon = '•') {
 function teleport(room, p, x, y, z, rot) {
   p.pos = [x, y, z];
   if (rot !== undefined) p.rot = rot;
-  if (!p.isBot) io.to(p.id).emit('spawn', { pos: p.pos, rot: p.rot });
+  if (p.isBot) bots.teleported(p);
+  else io.to(p.id).emit('spawn', { pos: p.pos, rot: p.rot });
 }
 
 function participants(room) {
@@ -227,20 +233,24 @@ function startGame(room) {
 function nextRound(room) {
   room.round++;
   room.lastWinner = null;
+  room.summary = null;
+  room.roundCatches = [];
+  room.lastMinute = false;
+  room.lastOne = false;
   const map = MAPS[room.settings.map];
   const colliders = COLLIDERS[room.settings.map];
   const all = [...room.players.values()];
-  const humans = all.filter((p) => !p.isBot);
-  // quien está reconectándose no puede ser buscador (se quedaría la ronda sin nadie buscando)
-  const online = humans.filter((p) => p.connected);
 
   let nSeekers = room.settings.seekers > 0 ? room.settings.seekers : Math.max(1, Math.floor(all.length / 4));
-  nSeekers = clamp(nSeekers, 1, Math.max(1, humans.length > 1 ? humans.length - 1 : 1));
-  // los bots siempre se esconden; buscan los humanos que menos veces hayan buscado
-  const candidates = (online.length ? online : humans).slice().sort((a, b) => a.seekerCount - b.seekerCount || Math.random() - 0.5);
+  nSeekers = clamp(nSeekers, 1, Math.max(1, all.length - 1));
+  // buscan quienes menos veces lo han hecho; a igualdad, antes las personas que los bots.
+  // Quien está reconectándose no puede buscar (la ronda se quedaría sin nadie buscando).
+  const eligible = all.filter((p) => p.isBot || p.connected);
+  const candidates = shuffle(eligible.length ? eligible : all).sort((a, b) => a.seekerCount - b.seekerCount || a.isBot - b.isBot);
   const seekers = new Set(candidates.slice(0, nSeekers).map((p) => p.id));
   if (all.length === 1) seekers.clear(); // un solo jugador: se esconde para probar
 
+  bots.roundStart(room);
   let hi = 0;
   let si = 0;
   for (const p of all) {
@@ -249,6 +259,8 @@ function nextRound(room) {
     p.propRot = 0;
     p.frozenUntil = 0;
     p.stunnedUntil = 0;
+    p.nextAuto = 0;
+    p.roundStartScore = p.score;
     if (seekers.has(p.id)) {
       p.role = 'seeker';
       p.hp = SEEKER_HP;
@@ -257,43 +269,34 @@ function nextRound(room) {
       const [fx2, fz] = findFreeSpot(colliders, x, z, 0.4, 1.8);
       teleport(room, p, fx2, 0, fz, faceCenter(map, fx2, fz));
     } else {
+      // los bots también salen de aquí y van corriendo a esconderse
       p.role = 'hider';
       p.hp = HIDER_HP;
-      if (p.isBot) placeBot(room, p);
-      else {
-        const [x, z] = map.spawns.hider[hi++ % map.spawns.hider.length];
-        const [fx2, fz] = findFreeSpot(colliders, x, z, 0.4, 1.8);
-        teleport(room, p, fx2, 0, fz, faceCenter(map, fx2, fz) + (Math.random() - 0.5) * 2);
-      }
+      const [x, z] = map.spawns.hider[hi++ % map.spawns.hider.length];
+      const [fx2, fz] = findFreeSpot(colliders, x, z, 0.4, 1.8);
+      teleport(room, p, fx2, 0, fz, faceCenter(map, fx2, fz) + (Math.random() - 0.5) * 2);
     }
   }
   room.state = 'hiding';
   room.endAt = now() + room.settings.hideTime * 1000;
   room.lastPointsAt = 0;
-  fx(room, { type: 'announce', title: `Ronda ${room.round} de ${room.settings.rounds}`, text: '¡Escondeos! Los buscadores salen pronto.' });
+  fx(room, { type: 'roundStart', round: room.round, rounds: room.settings.rounds });
   sendRoom(room);
+}
+
+function shuffle(list) {
+  const a = list.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 // orientación para mirar hacia el centro del mapa
 function faceCenter(map, x, z) {
   const [x1, z1, x2, z2] = map.bounds;
   return Math.atan2(-((x1 + x2) / 2 - x), -((z1 + z2) / 2 - z));
-}
-
-function placeBot(room, p) {
-  const map = MAPS[room.settings.map];
-  const colliders = COLLIDERS[room.settings.map];
-  const floorProps = map.props.filter((q) => q.p[1] === 0 && q.t !== 'tree');
-  const model = pick(floorProps);
-  p.prop = model.t;
-  p.propRot = model.r + (Math.random() < 0.5 ? 0 : Math.PI / 2);
-  const [w, h, d] = propFootprint(p.prop, 0);
-  const r = Math.max(0.2, Math.min(w, d) / 2);
-  const target = pick(floorProps);
-  const ang = Math.random() * Math.PI * 2;
-  const [x, z] = findFreeSpot(colliders, target.p[0] + Math.cos(ang) * 1.5, target.p[2] + Math.sin(ang) * 1.5, r, h);
-  p.pos = [x, 0, z];
-  p.rot = p.propRot;
 }
 
 function endRound(room, winner, reason) {
@@ -311,7 +314,19 @@ function endRound(room, winner, reason) {
   const text = reason || (winner === 'hiders'
     ? `Sobreviven: ${survivors.map((p) => p.name).join(', ')} (+100)`
     : 'No queda nadie escondido (+50 a cada buscador)');
-  fx(room, { type: 'announce', title, text, big: true });
+  // resumen de la ronda para la pantalla de fin de ronda
+  room.summary = {
+    winner,
+    title,
+    text,
+    last: room.round >= room.settings.rounds,
+    catches: room.roundCatches || [],
+    survivors: survivors.map((p) => ({ id: p.id, name: p.name, color: p.color, prop: p.prop, pos: p.pos })),
+    standings: [...room.players.values()]
+      .filter((p) => p.role !== 'lobby')
+      .map((p) => ({ id: p.id, name: p.name, color: p.color, isBot: p.isBot, score: p.score, delta: p.score - (p.roundStartScore ?? p.score) }))
+      .sort((a, b) => b.score - a.score),
+  };
   sysChat(room, `${title} ${text}`);
   sendRoom(room);
 }
@@ -364,21 +379,73 @@ function removePlayer(room, p, msg) {
 function catchHider(room, hider, by) {
   hider.hp = 0;
   if (by) { by.score += 100; by.catches++; }
+  room.roundCatches?.push({ by: by?.name || null, byColor: by?.color || null, name: hider.name, color: hider.color, prop: hider.prop });
   feed(room, by ? `${by.name} ha pillado a ${hider.name} (${hider.prop ? PROPS[hider.prop].name : 'sin disfraz'})` : `${hider.name} ha sido eliminado`, '🎯');
-  fx(room, { type: 'caught', id: hider.id, pos: hider.pos });
-  if (room.settings.infection && !hider.isBot) {
+  fx(room, { type: 'caught', id: hider.id, by: by?.id || null, pos: hider.pos, prop: hider.prop, name: hider.name });
+  if (room.settings.infection) {
+    // pillado = pasa a buscar (también los bots, que se ponen a cazar)
     hider.role = 'seeker';
     hider.hp = SEEKER_HP;
     hider.prop = null;
     hider.alive = true;
-    io.to(hider.id).emit('toast', { text: '¡Te han pillado! Ahora eres buscador: ¡caza a los demás!' });
   } else {
     hider.alive = false;
-    if (!hider.isBot) io.to(hider.id).emit('toast', { text: '¡Te han pillado! Ahora miras como espectador.' });
   }
   sendRoom(room);
-  if (aliveHiders(room).length === 0) endRound(room, 'seekers');
+  const left = aliveHiders(room);
+  if (left.length === 0) endRound(room, 'seekers');
+  else if (left.length === 1 && !room.lastOne && room.state === 'seeking') {
+    room.lastOne = true;
+    fx(room, { type: 'announce', title: '¡Solo queda uno!', text: `${left[0].name} es el último escondido` });
+  }
 }
+
+// un disparo de buscador (persona o bot) que ya se ha dado por bueno
+function applyShot(room, p, kind, targetId) {
+  if (kind === 'player') {
+    const h = room.players.get(targetId);
+    if (!h || h.role !== 'hider' || !h.alive) return;
+    h.hp -= HIT_DAMAGE;
+    p.score += 10;
+    fx(room, { type: 'hit', id: h.id, by: p.id, from: p.pos, hp: Math.max(0, h.hp) });
+    if (h.hp <= 0) catchHider(room, h, p);
+    else {
+      bots.hurt(room, h, p);
+      sendRoom(room);
+    }
+  } else if (kind === 'prop') {
+    p.hp -= WRONG_PENALTY;
+    if (p.hp <= 0) {
+      p.hp = SEEKER_HP;
+      p.stunnedUntil = now() + 5000;
+      feed(room, `${p.name} ha disparado a demasiados objetos y está mareado`, '💫');
+    }
+    sendRoom(room);
+  }
+}
+
+// un escondido hace ruido: suena para todos y los bots buscadores van a mirar
+function doTaunt(room, p, forced = false) {
+  p.lastTaunt = now();
+  if (!forced) p.score += 15;
+  fx(room, { type: 'taunt', id: p.id, pos: p.pos, sound: Math.floor(Math.random() * TAUNT_SOUNDS), forced });
+  bots.heard(room, p);
+  sendRoom(room);
+}
+
+const bots = createBots({
+  colliders: (mapId) => COLLIDERS[mapId],
+  shoot(room, bot, kind, targetId, from, to) {
+    bot.lastShot = now();
+    fx(room, { type: 'tracer', from: from.map((v) => +v.toFixed(2)), to: to.map((v) => +v.toFixed(2)), color: bot.color, by: bot.id });
+    applyShot(room, bot, kind, targetId);
+  },
+  taunt: (room, bot) => doTaunt(room, bot),
+  disguised(room, bot) {
+    fx(room, { type: 'disguise', id: bot.id, pos: bot.pos });
+    sendRoom(room);
+  },
+});
 
 function tick() {
   const t = now();
@@ -391,6 +458,7 @@ function tick() {
       room.state = 'seeking';
       room.endAt = t + room.settings.seekTime * 1000;
       room.lastPointsAt = t;
+      bots.seekStart(room);
       fx(room, { type: 'announce', title: '¡Salen los buscadores!', text: 'Escondidos: no os mováis... o sí 😏' });
       sendRoom(room);
     } else if (room.state === 'seeking') {
@@ -399,28 +467,41 @@ function tick() {
         for (const p of aliveHiders(room)) p.score += 5;
         sendRoom(room);
       }
+      if (room.settings.autoTaunt && room.endAt - t <= 60000) autoTaunt(room, t);
       if (aliveHiders(room).length === 0) endRound(room, 'seekers');
       else if (t >= room.endAt) endRound(room, 'hiders');
     } else if (room.state === 'roundEnd' && t >= room.endAt) {
       if (room.round >= room.settings.rounds) endGame(room);
       else nextRound(room);
     }
-    // bots: de vez en cuando hacen ruido
-    if (room.state === 'seeking') {
-      for (const p of room.players.values()) {
-        if (p.isBot && p.role === 'hider' && p.alive && t - p.lastTaunt > 15000 && Math.random() < 0.01) {
-          p.lastTaunt = t;
-          fx(room, { type: 'taunt', id: p.id, pos: p.pos, sound: Math.floor(Math.random() * 4) });
-        }
-      }
-    }
   }
 }
 setInterval(tick, 250);
 
-// posiciones a 15 Hz
+// último minuto: los escondidos hacen ruido solos cada 20 s (así no se puede acampar para siempre)
+function autoTaunt(room, t) {
+  if (!room.lastMinute) {
+    room.lastMinute = true;
+    fx(room, { type: 'announce', title: '⏰ ¡Último minuto!', text: 'Los escondidos hacen ruido solos cada 20 segundos' });
+  }
+  for (const p of aliveHiders(room)) {
+    if (!p.nextAuto) p.nextAuto = t + 1500 + Math.random() * 8000;
+    p.nextAuto = Math.max(p.nextAuto, p.lastTaunt + AUTO_TAUNT_EVERY);
+    if (t < p.nextAuto) continue;
+    p.nextAuto = t + AUTO_TAUNT_EVERY;
+    doTaunt(room, p, true);
+    if (!p.isBot) io.to(p.id).emit('toast', { text: '📣 ¡Último minuto: has hecho ruido!' });
+  }
+}
+
+// bots y posiciones a 15 Hz
+let lastFrame = now();
 setInterval(() => {
+  const t = now();
+  const dt = Math.min(0.1, (t - lastFrame) / 1000);
+  lastFrame = t;
   for (const room of rooms.values()) {
+    if (room.state === 'hiding' || room.state === 'seeking') bots.update(room, dt, t);
     if (room.state === 'lobby') continue;
     const list = [];
     for (const p of room.players.values()) {
@@ -460,8 +541,9 @@ const HELP = [
   ['/expulsar <nombre>', 'Echa a alguien de la sala'],
   ['/mapa <casa|almacen|parque>', 'Cambia el mapa (en la sala de espera)'],
   ['/rondas <n>', 'Número de rondas'],
-  ['/bot [n]', 'Añade bots escondidos para practicar'],
+  ['/bot [n]', 'Añade bots (se esconden y, si les toca, buscan)'],
   ['/quitarbots', 'Quita todos los bots'],
+  ['/dificultad <facil|normal|dificil>', 'Lo listos que son los bots'],
   ['/anuncio <texto>', 'Muestra un mensaje gigante a todos'],
   ['/admin <nombre>', 'Pasa el mando de administrador a otro'],
 ];
@@ -544,8 +626,9 @@ function runCommand(room, admin, line) {
     }
     case 'sonido':
     case 'ruido': {
+      if (room.state !== 'seeking') return reply('Solo mientras se busca.');
       const t = (args[0] ? needTargets() : aliveHiders(room)).filter((p) => p.role === 'hider' && p.alive);
-      for (const p of t) fx(room, { type: 'taunt', id: p.id, pos: p.pos, sound: Math.floor(Math.random() * 4), forced: true });
+      for (const p of t) doTaunt(room, p, true);
       if (t.length) feed(room, `El admin ha hecho sonar a ${t.length === 1 ? t[0].name : t.length + ' escondidos'}`, '🔊');
       return;
     }
@@ -623,7 +706,6 @@ function runCommand(room, admin, line) {
     case 'escondido': {
       if (!playing) return reply('Solo durante una ronda.');
       for (const p of needTargets()) {
-        if (p.isBot && cmd === 'buscador') continue;
         p.role = cmd === 'buscador' ? 'seeker' : 'hider';
         p.alive = true;
         p.hp = 100;
@@ -648,7 +730,7 @@ function runCommand(room, admin, line) {
       if (!playing) return reply('Solo durante una ronda.');
       for (const p of needTargets()) {
         p.role = 'hider'; p.alive = true; p.hp = HIDER_HP;
-        if (p.isBot) placeBot(room, p);
+        if (p.isBot) p.ai = null; // vuelve a esconderse solo
         else {
           const [x, z] = pick(map.spawns.hider);
           teleport(room, p, x, 0, z);
@@ -711,7 +793,7 @@ function runCommand(room, admin, line) {
         if (room.players.size >= 16) break;
         const name = BOT_NAMES.find((b) => ![...room.players.values()].some((p) => p.name === b)) || 'Bot';
         const bot = addPlayer(room, `bot-${Math.random().toString(36).slice(2, 9)}`, name, null, true);
-        if (playing) { bot.role = 'hider'; bot.hp = HIDER_HP; placeBot(room, bot); }
+        if (playing) { bot.role = 'hider'; bot.hp = HIDER_HP; }
       }
       sysChat(room, `Añadidos ${n} bot(s).`);
       sendRoom(room);
@@ -721,6 +803,15 @@ function runCommand(room, admin, line) {
       for (const p of [...room.players.values()]) if (p.isBot) room.players.delete(p.id);
       sendRoom(room);
       if (playing && aliveHiders(room).length === 0) endRound(room, 'seekers');
+      else if (playing && !participants(room).some((q) => q.role === 'seeker')) endRound(room, 'hiders', 'No quedan buscadores');
+      return;
+    }
+    case 'dificultad': {
+      const lv = { facil: 'facil', normal: 'normal', dificil: 'dificil', facile: 'facil', easy: 'facil', hard: 'dificil' }[norm(args[0])];
+      if (!lv) return reply('Uso: /dificultad facil | normal | dificil');
+      room.settings.botLevel = lv;
+      sysChat(room, `🤖 Bots en modo ${{ facil: 'fácil', normal: 'normal', dificil: 'difícil' }[lv]}`);
+      sendRoom(room);
       return;
     }
     case 'anuncio': {
@@ -830,12 +921,14 @@ io.on('connection', (socket) => {
     const room = getRoom();
     if (!room || !isHost(room)) return;
     const st = room.settings;
-    if (MAPS[s.map]) st.map = s.map;
+    if (typeof s.map === 'string' && Object.hasOwn(MAPS, s.map)) st.map = s.map;
     if (s.rounds !== undefined) st.rounds = clamp(parseInt(s.rounds, 10) || 3, 1, 20);
     if (s.hideTime !== undefined) st.hideTime = clamp(parseInt(s.hideTime, 10) || 30, 5, 120);
     if (s.seekTime !== undefined) st.seekTime = clamp(parseInt(s.seekTime, 10) || 180, 30, 900);
     if (s.seekers !== undefined) st.seekers = clamp(parseInt(s.seekers, 10) || 0, 0, 8);
     if (s.infection !== undefined) st.infection = !!s.infection;
+    if (typeof s.botLevel === 'string' && Object.hasOwn(BOT_LEVELS, s.botLevel)) st.botLevel = s.botLevel;
+    if (s.autoTaunt !== undefined) st.autoTaunt = !!s.autoTaunt;
     sendRoom(room);
   });
 
@@ -870,6 +963,7 @@ io.on('connection', (socket) => {
     if (now() - p.lastDisguise < 500) return;
     p.lastDisguise = now();
     p.prop = type;
+    socket.to(room.code).emit('fx', { type: 'disguise', id: p.id, pos: p.pos });
     sendRoom(room);
   });
 
@@ -880,24 +974,9 @@ io.on('connection', (socket) => {
     const t = now();
     if (t - p.lastShot < 280 || p.frozenUntil > t || p.stunnedUntil > t) return;
     p.lastShot = t;
-    if (Array.isArray(from) && Array.isArray(to)) socket.to(room.code).emit('fx', { type: 'tracer', from, to, color: p.color });
-    if (kind === 'player') {
-      const h = room.players.get(target);
-      if (!h || h.role !== 'hider' || !h.alive) return;
-      h.hp -= HIT_DAMAGE;
-      p.score += 10;
-      fx(room, { type: 'hit', id: h.id, by: p.id });
-      if (h.hp <= 0) catchHider(room, h, p);
-      else sendRoom(room);
-    } else if (kind === 'prop') {
-      p.hp -= WRONG_PENALTY;
-      if (p.hp <= 0) {
-        p.hp = SEEKER_HP;
-        p.stunnedUntil = t + 5000;
-        feed(room, `${p.name} ha disparado a demasiados objetos y está mareado`, '💫');
-      }
-      sendRoom(room);
-    }
+    const okVec = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
+    if (okVec(from) && okVec(to)) socket.to(room.code).emit('fx', { type: 'tracer', from, to, color: p.color, by: p.id });
+    applyShot(room, p, kind, target);
   });
 
   socket.on('taunt', () => {
@@ -905,10 +984,7 @@ io.on('connection', (socket) => {
     const p = me();
     if (!room || !p || p.role !== 'hider' || !p.alive || room.state !== 'seeking') return;
     if (now() - p.lastTaunt < 6000) return;
-    p.lastTaunt = now();
-    p.score += 15;
-    fx(room, { type: 'taunt', id: p.id, pos: p.pos, sound: Math.floor(Math.random() * 4) });
-    sendRoom(room);
+    doTaunt(room, p);
   });
 
   socket.on('chat', (text) => {

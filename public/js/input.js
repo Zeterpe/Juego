@@ -100,6 +100,7 @@ export class Input {
         if (t.identifier === joyId) {
           joyId = null; this.joy.x = 0; this.joy.y = 0;
           knob.style.transform = ''; joyEl.classList.remove('active');
+          joyEl.style.left = ''; joyEl.style.top = ''; // vuelve a su sitio en la esquina
         } else if (t.identifier === lookId) lookId = null;
       }
     };

@@ -53,12 +53,13 @@
       <details class="howto">
         <summary>¿Cómo se juega?</summary>
         <ul>
-          <li><b>Escondidos:</b> apunta a un objeto y pulsa <kbd>E</kbd> para convertirte en él. Quédate quieto donde no desentones. Cada 10 s vivo ganas puntos y si sobrevives a la ronda, +100.</li>
+          <li><b>Escondidos:</b> apunta a un objeto y pulsa <kbd>E</kbd> para convertirte en él. Quédate quieto donde no desentones: junto a objetos iguales pasas desapercibido. Cada 10 s vivo ganas puntos y si sobrevives a la ronda, +100.</li>
           <li><b>Buscadores:</b> salen cuando acaba el tiempo de esconderse. Dispara a los objetos sospechosos: si es un jugador, ¡+100! Si es un objeto de verdad, pierdes vida.</li>
-          <li>Haz ruido con <kbd>T</kbd> para ganar puntos extra (pero te delata).</li>
-          <li>Gana quien tenga más puntos al final de todas las rondas.</li>
-          <li>Ordenador: <kbd>WASD</kbd> moverse, ratón mirar, <kbd>Espacio</kbd> saltar, <kbd>Shift</kbd> correr, <kbd>Tab</kbd> marcador, <kbd>Enter</kbd> chat.</li>
-          <li>Móvil: joystick a la izquierda, arrastra a la derecha para mirar y usa los botones.</li>
+          <li>Haz ruido con <kbd>T</kbd> para ganar puntos extra (pero te delata: se oye en todo el mapa y se ve de dónde viene). En el último minuto haces ruido solo cada 20 s.</li>
+          <li>Si te pillan, te conviertes en buscador (también los bots). Gana quien tenga más puntos al final.</li>
+          <li>¿Sin amigos a mano? Añade bots en la sala: se esconden, huyen, buscan y disparan.</li>
+          <li>Ordenador: <kbd>WASD</kbd> moverse, ratón mirar, <kbd>Espacio</kbd> saltar, <kbd>Shift</kbd> correr, <kbd>Tab</kbd> marcador, <kbd>Enter</kbd> chat, <kbd>Esc</kbd> menú.</li>
+          <li>Móvil: joystick a la izquierda, arrastra a la derecha para mirar y usa los botones. El menú está en ⚙️.</li>
         </ul>
       </details>
     </div>
@@ -107,7 +108,9 @@
             <label>Tiempo para esconderse <select id="set-hide"></select></label>
             <label>Tiempo para buscar <select id="set-seek"></select></label>
             <label>Buscadores <select id="set-seekers"></select></label>
+            <label>Dificultad de los bots <select id="set-bots"></select></label>
             <label class="check"><input type="checkbox" id="set-infection" /> Los pillados se convierten en buscadores</label>
+            <label class="check"><input type="checkbox" id="set-autotaunt" /> Último minuto: los escondidos hacen ruido solos</label>
           </div>
           <button id="btn-start" class="btn big primary">▶ Empezar partida</button>
           <p id="lobby-wait" class="muted center">Esperando a que el admin empiece…</p>
@@ -146,11 +149,41 @@
       <div id="alive-count" class="pill big-pill"></div>
     </div>
     <div id="crosshair" class="crosshair hidden"></div>
+    <div id="hitmarker" class="hitmarker"></div>
+    <div id="pings" class="pings"></div>
+    <div id="dmg" class="dmg"></div>
+    <div id="popups" class="popups"></div>
+    <div id="big-msg" class="big-msg hidden"></div>
+    <div id="fps" class="fps hidden"></div>
     <div id="feed" class="feed"></div>
     <div id="announce" class="announce hidden"><div id="announce-title"></div><div id="announce-text"></div></div>
     <div id="toast" class="toast hidden"></div>
     <div id="hint" class="hint"></div>
-    <div id="click-to-play" class="click-to-play hidden">Haz clic para jugar</div>
+    <div id="click-to-play" class="click-to-play hidden">🖱️ Haz clic para jugar <small>Esc = menú</small></div>
+
+    <div id="intro" class="intro hidden">
+      <div class="intro-card">
+        <div id="intro-round" class="intro-round"></div>
+        <div id="intro-icon" class="intro-icon"></div>
+        <div id="intro-role" class="intro-role"></div>
+        <div id="intro-text" class="intro-text"></div>
+        <div id="intro-map" class="intro-map muted"></div>
+      </div>
+    </div>
+
+    <div id="summary" class="summary hidden">
+      <div class="summary-card">
+        <div id="sum-title" class="sum-title"></div>
+        <div id="sum-text" class="sum-text"></div>
+        <div class="sum-cols">
+          <div class="sum-col"><h4>🎯 Pillados</h4><ul id="sum-catches"></ul></div>
+          <div class="sum-col"><h4>🙈 Sobreviven</h4><ul id="sum-survivors"></ul></div>
+        </div>
+        <h4>Clasificación</h4>
+        <ol id="sum-standings" class="sum-standings"></ol>
+        <div id="sum-next" class="sum-next"></div>
+      </div>
+    </div>
 
     <div id="chat-box" class="chat-box">
       <div id="game-chat" class="chat-log"></div>
@@ -248,14 +281,86 @@
     </div>
   </div>
 
-  <!-- MENÚ DE PAUSA -->
+  <!-- MENÚ DE PAUSA (Esc) -->
   <div id="pause" class="overlay hidden">
-    <div class="sheet small-sheet">
-      <div class="sheet-head"><h2>Ajustes</h2><button class="btn ghost close" data-close="pause">✕</button></div>
-      <label class="slider">Sensibilidad <input type="range" id="sens" min="0.3" max="3" step="0.1" /></label>
-      <label class="check"><input type="checkbox" id="mute" /> Silenciar sonido</label>
-      <button id="btn-invite-game" class="btn">📲 Invitar a más amigos</button>
-      <button id="btn-quit" class="btn danger">Salir de la sala</button>
+    <div class="sheet pause-sheet">
+      <div class="pause-head">
+        <div>
+          <h2>⏸️ Pausa</h2>
+          <div id="pause-info" class="pause-info"></div>
+        </div>
+        <button class="btn ghost close" data-close="pause" title="Cerrar (Esc)">✕</button>
+      </div>
+      <button id="btn-resume" class="btn big primary">▶ Volver al juego</button>
+      <div class="tabs" role="tablist">
+        <button class="tab sel" data-tab="tab-scores">🏆 Marcador</button>
+        <button class="tab" data-tab="tab-settings">⚙️ Ajustes</button>
+        <button class="tab" data-tab="tab-controls">🎮 Controles</button>
+        <button class="tab" data-tab="tab-invite">📲 Invitar</button>
+      </div>
+      <div id="tab-scores" class="tab-body">
+        <table><thead><tr><th>#</th><th>Jugador</th><th>Rol</th><th>Pillados</th><th>Puntos</th></tr></thead><tbody id="pause-scores"></tbody></table>
+      </div>
+      <div id="tab-settings" class="tab-body hidden">
+        <div class="set-grid">
+          <label class="slider"><span>🖱️ Sensibilidad <b id="sens-val"></b></span><input type="range" id="sens" min="0.3" max="3" step="0.1" /></label>
+          <label class="slider"><span>🔊 Volumen <b id="vol-val"></b></span><input type="range" id="vol" min="0" max="1" step="0.05" /></label>
+          <label class="slider"><span>👁️ Campo de visión <b id="fov-val"></b></span><input type="range" id="fov" min="60" max="100" step="1" /></label>
+          <label class="slider"><span>🖥️ Calidad gráfica</span>
+            <select id="quality"><option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja (para móviles lentos)</option></select>
+          </label>
+          <label class="check"><input type="checkbox" id="mute" /> Silenciar todo</label>
+          <label class="check"><input type="checkbox" id="invert-y" /> Invertir el eje vertical</label>
+          <label class="check"><input type="checkbox" id="show-fps" /> Mostrar FPS</label>
+        </div>
+      </div>
+      <div id="tab-controls" class="tab-body hidden">
+        <div class="controls-grid">
+          <div>
+            <h4>💻 Ordenador</h4>
+            <ul class="keys">
+              <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Moverse</li>
+              <li><kbd>Ratón</kbd> Mirar</li>
+              <li><kbd>Shift</kbd> Correr · <kbd>Espacio</kbd> Saltar</li>
+              <li><kbd>Clic</kbd> Disparar (buscador)</li>
+              <li><kbd>E</kbd> / <kbd>Clic der.</kbd> Disfrazarte del objeto que miras</li>
+              <li><kbd>Q</kbd> Quitar el disfraz · <kbd>R</kbd> Bloquear el giro</li>
+              <li><kbd>T</kbd> Hacer ruido (+15 puntos)</li>
+              <li><kbd>Tab</kbd> Marcador · <kbd>Enter</kbd> Chat · <kbd>Esc</kbd> Este menú</li>
+            </ul>
+          </div>
+          <div>
+            <h4>📱 Móvil</h4>
+            <ul class="keys">
+              <li>Joystick (izquierda): moverse</li>
+              <li>Arrastra en la derecha: mirar</li>
+              <li>💦 Disparar · ⤒ Saltar</li>
+              <li>🎭 Disfrazarte · 🙍 Quitar disfraz</li>
+              <li>🔒 Bloquear giro · 📣 Hacer ruido</li>
+              <li>⚙️ Este menú</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div id="tab-invite" class="tab-body hidden">
+        <div class="invite pause-invite">
+          <img id="pause-qr" class="qr" alt="Código QR para unirse a la sala" />
+          <div class="invite-body">
+            <div class="invite-title">Que abran este enlace o escaneen el QR: entran directamente</div>
+            <input id="pause-url" class="invite-url" readonly />
+            <div class="invite-buttons">
+              <button id="btn-invite-game" class="btn">📋 Copiar enlace</button>
+              <a id="pause-whatsapp" class="btn whatsapp" target="_blank" rel="noopener">💬 WhatsApp</a>
+              <button id="pause-share" class="btn hidden">📤 Compartir</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pause-foot">
+        <button id="btn-pause-admin" class="btn hidden">👑 Panel de admin</button>
+        <button id="btn-quit" class="btn danger">🚪 Salir de la sala</button>
+      </div>
+      <p class="muted small center">La partida sigue mientras estás en este menú.</p>
     </div>
   </div>
 

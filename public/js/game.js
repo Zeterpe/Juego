@@ -12,12 +12,13 @@ const CHAR_R = 0.35;
 const CHAR_H = 1.8;
 const DISGUISE_RANGE = 4.5;
 const SHOOT_RANGE = 60;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 export class Game {
   constructor(canvas, input, net) {
     this.canvas = canvas;
     this.input = input;
-    this.net = net; // { sendState, shoot, disguise, taunt, hint, toast, onLocalHit }
+    this.net = net; // { sendState, shoot, disguise, taunt, hint, toast, onLocalHit, hitMarker, caughtByMe }
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     this.renderer.shadowMap.enabled = true;
@@ -87,6 +88,13 @@ export class Game {
     this.aimTarget = null;
     this.hitFlash = 0;
     this.lastRadarState = false;
+    this.prefs = { fov: 75, invertY: false, quality: 'alta' };
+    this.pings = []; // ruidos recientes: el HUD dibuja de dónde vienen
+    this.stepT = 0;
+    this.shake = 0;
+    this.fps = 0;
+    this.fpsFrames = 0;
+    this.fpsT = 0;
 
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -101,6 +109,52 @@ export class Game {
   }
 
   serverNow() { return Date.now() + this.clockOffset; }
+
+  // ajustes del menú de pausa: campo de visión, invertir ratón y calidad gráfica
+  applyPrefs(p) {
+    this.prefs = { ...this.prefs, ...p };
+    const q = this.prefs.quality;
+    const dpr = window.devicePixelRatio || 1;
+    this.renderer.setPixelRatio(q === 'alta' ? Math.min(dpr, 1.75) : q === 'media' ? Math.min(dpr, 1.25) : Math.min(dpr, 1) * 0.75);
+    const shadows = q !== 'baja';
+    const size = q === 'alta' ? 2048 : 1024;
+    if (this.renderer.shadowMap.enabled !== shadows || this.sun.shadow.mapSize.x !== size) {
+      this.renderer.shadowMap.enabled = shadows;
+      this.sun.castShadow = shadows;
+      this.sun.shadow.mapSize.set(size, size);
+      if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
+      this.scene.traverse((o) => {
+        if (!o.material) return;
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true;
+      });
+    }
+    this.resize();
+  }
+
+  // ángulo de un punto respecto a donde miras (0 = delante, positivo = a la derecha)
+  angleTo(x, z) {
+    const a = Math.atan2(-(x - this.camera.position.x), -(z - this.camera.position.z));
+    let d = this.yaw - a;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return d;
+  }
+
+  // cómo te llega un sonido: distancia, izquierda/derecha y si hay una pared en medio
+  hear(x, y, z) {
+    const dx = x - this.me.x;
+    const dz = z - this.me.z;
+    const d = Math.hypot(dx, dz);
+    const pan = d > 0.5 ? clamp((dx * Math.cos(this.yaw) - dz * Math.sin(this.yaw)) / d, -1, 1) * 0.85 : 0;
+    const from = new THREE.Vector3(this.me.x, this.me.y + 1.4, this.me.z);
+    const dir = new THREE.Vector3(x, y + 0.5, z).sub(from);
+    let wall = false;
+    for (const c of this.colliders) {
+      const t = rayBox(from, dir, c);
+      if (t !== null && t < 0.97) { wall = true; break; }
+    }
+    return { d, pan, muffle: wall ? 0.6 : 0 };
+  }
 
   // ------------------------------------------------------------ mapa
   loadMap(id) {
@@ -304,6 +358,8 @@ export class Game {
       if (!this.running) return;
       const dt = Math.min(0.05, (t - this.last) / 1000);
       this.last = t;
+      this.fpsFrames++;
+      if (t - this.fpsT >= 500) { this.fps = Math.round((this.fpsFrames * 1000) / (t - this.fpsT)); this.fpsFrames = 0; this.fpsT = t; }
       this.update(dt, t / 1000);
       this.renderer.render(this.scene, this.camera);
       requestAnimationFrame(loop);
@@ -326,7 +382,7 @@ export class Game {
     // mirar
     const [lx, ly] = this.input.consumeLook();
     this.yaw -= lx;
-    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - ly));
+    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - ly * (this.prefs.invertY ? -1 : 1)));
     if (role === 'hider' && !this.rotLocked) this.propRot = this.yaw;
 
     // movimiento
@@ -351,6 +407,13 @@ export class Game {
       if (this.input.take('jump') && this.me.onGround && !frozen) this.me.vy = 7.2 * Math.sqrt(1 / Math.max(0.3, gravity)) * Math.min(1.3, Math.max(0.8, info.scale || 1));
       moveBody(this.colliders, this.me, dx, dz, dt, gravity);
       if (this.me.y < -5) this.me.y = 1;
+      // tus pasos (flojitos); disfrazado suena a objeto arrastrándose
+      const walking = sp > 0 && Math.hypot(mv.x, mv.y) > 0.1 && this.me.onGround;
+      this.stepT -= walking ? dt : this.stepT;
+      if (walking && this.stepT <= 0) {
+        this.stepT = this.input.sprint() ? 0.27 : 0.36;
+        sfx.step(0.13, 0, role === 'hider' && !!info.prop);
+      }
     }
 
     // acciones
@@ -393,20 +456,31 @@ export class Game {
 
     // jugadores remotos
     const radar = role === 'seeker' && (this.room.mods?.radarUntil || 0) > now;
-    const seeAllTags = role !== 'seeker';
+    const reveal = state === 'roundEnd'; // al acabar la ronda se ve dónde estaba cada escondido
+    const seeAllTags = role !== 'seeker' || reveal;
     for (const r of this.remotes.values()) {
       if (!r.target || !r.model) continue;
       const k = Math.min(1, dt * 14);
+      const ox = r.pos.x;
+      const oz = r.pos.z;
       r.pos.x += (r.target.x - r.pos.x) * k;
       r.pos.y += (r.target.y - r.pos.y) * k;
       r.pos.z += (r.target.z - r.pos.z) * k;
+      // pasos de los demás: cuanto más cerca, más fuerte (y apagados si hay una pared)
+      const speed = Math.hypot(r.pos.x - ox, r.pos.z - oz) / Math.max(dt, 0.001);
+      r.stepT = (r.stepT || 0) - dt;
+      if (speed > 1.2 && Math.abs(r.target.y - r.pos.y) < 0.05 && r.stepT <= 0) {
+        r.stepT = speed > 6 ? 0.27 : 0.35;
+        const h = this.hear(r.pos.x, r.pos.y, r.pos.z);
+        if (h.d < 22) sfx.step(0.6 * (1 - h.d / 22) ** 1.5 * (h.muffle ? 0.6 : 1), h.pan, r.info.role === 'hider' && !!r.info.prop);
+      }
       r.rot = lerpAngle(r.rot, r.target.rot, k);
       r.propRot = lerpAngle(r.propRot, r.target.pr, k);
       r.group.position.copy(r.pos);
       const p = r.info;
       r.model.rotation.y = p.role === 'hider' && p.prop ? r.propRot : r.rot + Math.PI;
       if (r.tag) r.tag.visible = seeAllTags || p.role === 'seeker';
-      if (r.marker) r.marker.visible = radar && p.role === 'hider';
+      if (r.marker) r.marker.visible = (radar || reveal) && p.role === 'hider';
       if (p.role === 'seeker' || (p.role === 'hider' && !p.prop)) {
         const moving = Math.abs(r.target.x - r.pos.x) + Math.abs(r.target.z - r.pos.z) > 0.02;
         bob(r.model, { x: 0, y: moving ? 1 : 0 }, time + r.pos.x);
@@ -448,6 +522,9 @@ export class Game {
       if (e.t >= e.life) { this.fxGroup.remove(e.obj); this.effects.splice(i, 1); }
     }
 
+    const pnow = performance.now();
+    this.pings = this.pings.filter((p) => p.until > pnow);
+
     // enviar mi estado
     if (performance.now() - this.lastSend > 66 && (state === 'hiding' || state === 'seeking' || state === 'roundEnd')) {
       this.lastSend = performance.now();
@@ -458,10 +535,11 @@ export class Game {
   updateCamera(role, dt) {
     const info = this.myInfo || {};
     const scale = info.scale || 1;
+    const fov = this.prefs.fov || 75;
     if (role === 'seeker') {
       this.camera.position.set(this.me.x, this.me.y + EYE * scale, this.me.z);
       this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
-      this.camera.fov = 75;
+      this.camera.fov = fov;
     } else if (role === 'hider') {
       const h = this.me.h;
       const target = new THREE.Vector3(this.me.x, this.me.y + Math.max(0.6, h * 0.8), this.me.z);
@@ -478,11 +556,17 @@ export class Game {
       if (pos.y < 0.2) pos.y = 0.2;
       this.camera.position.copy(pos);
       this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
-      this.camera.fov = 72;
+      this.camera.fov = fov - 3;
     } else {
       this.camera.position.set(this.me.x, this.me.y, this.me.z);
       this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
-      this.camera.fov = 72;
+      this.camera.fov = fov - 3;
+    }
+    // temblor al recibir un disparo
+    if (this.shake > 0) {
+      this.camera.position.x += (Math.random() - 0.5) * this.shake * 0.3;
+      this.camera.position.y += (Math.random() - 0.5) * this.shake * 0.3;
+      this.shake = Math.max(0, this.shake - dt * 1.5);
     }
     this.camera.updateProjectionMatrix();
   }
@@ -566,17 +650,19 @@ export class Game {
   updateHint(role, state, info, frozen) {
     const now = this.serverNow();
     let hint = '';
-    if (state === 'lobby' || state === 'gameEnd') hint = '';
+    if (state === 'lobby' || state === 'gameEnd' || state === 'roundEnd') hint = '';
     else if ((info.frozenUntil || 0) > now) hint = '🧊 ¡Estás congelado!';
     else if ((info.stunnedUntil || 0) > now) hint = '💫 Estás mareado...';
     else if (role === 'hider') {
       if (this.aimTarget && this.aimTarget.type !== info.prop) hint = `<b>${isTouch ? 'Toca 🎭' : 'E / clic derecho'}</b> → disfrazarte de <b>${PROPS[this.aimTarget.type].name}</b>`;
       else if (!info.prop) hint = 'Apunta a un objeto cercano para disfrazarte de él';
+      else if (isTouch) hint = `Eres: <b>${PROPS[info.prop].name}</b>${this.rotLocked ? ' 🔒' : ''} · 📣 ruido (+15)`;
       else hint = `Eres: <b>${PROPS[info.prop].name}</b> · ${this.rotLocked ? '🔒' : ''} R bloquear giro · T hacer ruido (+15) · Q quitar disfraz`;
     } else if (role === 'seeker') {
       if (state === 'hiding') hint = '';
+      else if (isTouch) hint = 'Dispara a lo sospechoso. ¡Fallar con un objeto real quita vida!';
       else hint = 'Dispara a los objetos sospechosos. ¡Cuidado, fallar con un objeto real te quita vida!';
-    } else if (state === 'hiding' || state === 'seeking') hint = 'Modo espectador: vuela libremente (Espacio sube, C baja)';
+    } else if (state === 'hiding' || state === 'seeking') hint = isTouch ? 'Modo espectador: vuela libremente' : 'Modo espectador: vuela libremente (Espacio sube, C baja)';
     if (frozen && !hint) hint = '';
     this.net.hint(hint);
   }
@@ -587,21 +673,39 @@ export class Game {
     if (e.type === 'tracer') {
       this.tracer(arr(e.from), arr(e.to), e.color);
       this.splash(arr(e.to));
-      const d = Math.hypot(e.from[0] - this.me.x, e.from[2] - this.me.z);
-      sfx.shootFar(Math.max(0.05, 1 - d / 40));
+      const h = this.hear(e.from[0], e.from[1] - 1.3, e.from[2]);
+      sfx.shootFar(clamp(1 - h.d / 45, 0.05, 1) * (h.muffle ? 0.7 : 1), h.pan, h.muffle);
     } else if (e.type === 'hit') {
       const r = this.remotes.get(e.id);
-      if (e.id === this.myId) { sfx.hurt(); this.net.onLocalHit(); }
-      else if (r) flashModel(r.model);
+      if (e.id === this.myId) {
+        sfx.hurt();
+        this.shake = 0.35;
+        this.net.onLocalHit(e.from);
+      } else if (r) flashModel(r.model);
+      if (e.by === this.myId) this.net.hitMarker?.(e.hp <= 0);
     } else if (e.type === 'taunt') {
-      const pos = e.id === this.myId ? new THREE.Vector3(this.me.x, this.me.y, this.me.z) : this.remotes.get(e.id)?.pos || arr(e.pos);
-      const d = Math.hypot(pos.x - this.me.x, pos.z - this.me.z);
-      sfx.taunt(e.sound, 1 - d / 45);
+      const mine = e.id === this.myId;
+      const pos = mine ? new THREE.Vector3(this.me.x, this.me.y, this.me.z) : this.remotes.get(e.id)?.pos.clone() || arr(e.pos);
+      if (mine) sfx.taunt(e.sound, { vol: 0.85 });
+      else {
+        // se oye desde casi todo el mapa, y en estéreo para saber hacia dónde ir
+        const h = this.hear(pos.x, pos.y, pos.z);
+        sfx.taunt(e.sound, { vol: clamp(1.15 - h.d / 70, 0.35, 1.1) * (h.muffle ? 0.85 : 1), pan: h.pan, muffle: h.muffle });
+        this.pings.push({ x: pos.x, z: pos.z, until: performance.now() + 3000 });
+      }
       this.note(pos);
+      this.waves(pos);
     } else if (e.type === 'caught') {
-      const pos = e.id === this.myId ? new THREE.Vector3(this.me.x, this.me.y, this.me.z) : this.remotes.get(e.id)?.pos || arr(e.pos);
       sfx.caught();
-      this.confetti(pos.clone().add(new THREE.Vector3(0, 0.6, 0)));
+      // si me pillan a mí, el confeti me taparía la cámara: aviso en pantalla en su lugar
+      if (e.id === this.myId) this.net.caughtMe?.(e);
+      else this.confetti((this.remotes.get(e.id)?.pos || arr(e.pos)).clone().add(new THREE.Vector3(0, 0.6, 0)));
+      if (e.by && e.by === this.myId) this.net.caughtByMe?.(e);
+    } else if (e.type === 'disguise' && e.id !== this.myId) {
+      const pos = this.remotes.get(e.id)?.pos || arr(e.pos);
+      this.puff(pos.clone().add(new THREE.Vector3(0, 0.5, 0)), '#ffffff');
+      const h = this.hear(pos.x, pos.y, pos.z);
+      if (h.d < 18) sfx.disguise(0.6 * (1 - h.d / 18) * (h.muffle ? 0.6 : 1), h.pan);
     } else if (e.type === 'radar' && role === 'seeker') {
       sfx.beep(true);
     }
@@ -644,10 +748,28 @@ export class Game {
   confetti(pos) { this.particles(pos, ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6'], 40, 4, 1.4, 6, 0.1); }
 
   note(pos) {
-    const s = makeTag('♪ ♫', '#f1c40f', 64);
-    s.position.copy(pos).add(new THREE.Vector3(0, 1.5, 0));
+    const s = makeTag('♪ ♫', '#f1c40f', 96);
+    s.position.copy(pos).add(new THREE.Vector3(0, 1.6, 0));
     this.fxGroup.add(s);
-    this.effects.push({ obj: s, t: 0, life: 2, update: (e, dt) => { s.position.y += dt * 0.8; s.material.opacity = 1 - e.t / e.life; } });
+    this.effects.push({ obj: s, t: 0, life: 2.6, update: (e, dt) => { s.position.y += dt * 0.8; s.material.opacity = 1 - e.t / e.life; } });
+  }
+
+  // ondas de sonido que salen del escondido que hace ruido
+  waves(pos) {
+    for (let i = 0; i < 3; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture(), transparent: true, depthWrite: false }));
+      s.position.copy(pos).add(new THREE.Vector3(0, 0.8, 0));
+      s.scale.setScalar(0.1);
+      this.fxGroup.add(s);
+      this.effects.push({
+        obj: s, t: -i * 0.3, life: 1.1,
+        update: (e) => {
+          const k = Math.max(0, e.t) / e.life;
+          s.scale.setScalar(0.4 + k * 4.5);
+          s.material.opacity = e.t < 0 ? 0 : 0.85 * (1 - k);
+        },
+      });
+    }
   }
 }
 
@@ -717,6 +839,20 @@ function makeTag(text, color, fontSize = 40) {
   s.scale.set(w * k, c.height * k, 1);
   s.renderOrder = 10;
   return s;
+}
+
+let ringTex = null;
+function ringTexture() {
+  if (ringTex) return ringTex;
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.strokeStyle = '#ffe066';
+  ctx.lineWidth = 7;
+  ctx.beginPath(); ctx.arc(64, 64, 58, 0, Math.PI * 2); ctx.stroke();
+  ringTex = new THREE.CanvasTexture(c);
+  ringTex.colorSpace = THREE.SRGBColorSpace;
+  return ringTex;
 }
 
 function makeMarker() {

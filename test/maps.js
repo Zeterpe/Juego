@@ -1,12 +1,14 @@
 // Comprueba que los mapas y los objetos están bien montados:
 // - cada objeto tiene modelo 3D y su tamaño declarado coincide con el modelo,
 // - ningún objeto del suelo atraviesa paredes ni otros objetos,
-// - todo está dentro del mapa y los puntos de aparición están libres.
+// - todo está dentro del mapa y los puntos de aparición están libres,
+// - los bots pueden ir andando de cualquier punto de aparición a cualquier otro.
 // Uso: node test/maps.js   (añade --tamaños para ver la tabla de medidas)
 import * as THREE from 'three';
 import { MAPS } from '../shared/maps.js';
 import { PROPS } from '../shared/props.js';
 import { buildColliders, collidesAny, bodyBox } from '../shared/physics.js';
+import { buildNav, findPath, cellOf } from '../shared/nav.js';
 import { buildProp, MODEL_TYPES } from '../public/js/models.js';
 
 const errors = [];
@@ -70,7 +72,18 @@ for (const map of Object.values(MAPS)) {
       if (collidesAny(colliders, bodyBox(x, 0.01, z, 0.35, 1.8))) errors.push(`${map.id}: aparición de ${kind} en [${x}, ${z}] está ocupada`);
     }
   }
-  console.log(`  ${map.name}: ${map.props.length} objetos, ${new Set(map.props.map((p) => p.t)).size} tipos distintos`);
+  // navegación de los bots: las apariciones están en la zona transitable y hay camino entre todas
+  const nav = buildNav(map, colliders);
+  const spawns = [...map.spawns.hider, ...map.spawns.seeker];
+  for (const [x, z] of spawns) {
+    const c = cellOf(nav, x, z);
+    if (c < 0 || !nav.walk[c] || nav.comp[c] !== nav.main) errors.push(`${map.id}: los bots no pueden llegar a la aparición [${x}, ${z}]`);
+  }
+  for (const a of spawns) {
+    for (const b of spawns) if (!findPath(nav, a[0], a[1], b[0], b[1])) errors.push(`${map.id}: no hay camino de [${a}] a [${b}]`);
+  }
+  const share = Math.round((nav.walkable / (nav.nx * nav.nz)) * 100);
+  console.log(`  ${map.name}: ${map.props.length} objetos, ${new Set(map.props.map((p) => p.t)).size} tipos distintos, ${share}% del suelo transitable`);
 }
 
 console.log(`  Catálogo: ${Object.keys(PROPS).length} objetos para disfrazarse`);

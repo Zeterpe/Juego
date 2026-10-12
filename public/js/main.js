@@ -2,14 +2,20 @@
 import { MAPS, MAP_KEYS } from '/shared/maps.js';
 import { Game } from './game.js';
 import { Input, isTouch } from './input.js';
-import { sfx, unlockAudio, setMuted, isMuted } from './audio.js';
+import { sfx, unlockAudio, setMuted, isMuted, setVolume, getVolume } from './audio.js';
+import { PROPS } from '/shared/props.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22', '#1abc9c', '#ff6b9d'];
 const MAP_ICONS = { casa: ['🏠', 'linear-gradient(135deg,#6fbf5a,#c8935b)'], almacen: ['📦', 'linear-gradient(135deg,#5d6d7e,#e67e22)'], parque: ['🌳', 'linear-gradient(135deg,#58b14c,#2e86c1)'] };
+const BOT_LEVELS = [['facil', '🙂 Fácil'], ['normal', '😐 Normal'], ['dificil', '😈 Difícil']];
 
-if (isTouch) document.body.classList.add('touch');
+if (isTouch) {
+  document.body.classList.add('touch');
+  // en el móvil la pista y el chat van en la columna de la izquierda, debajo de la vida, para no pisarse con nada
+  document.querySelector('.hud-left').append($('hint'), $('chat-box'));
+}
 
 const socket = io();
 const input = new Input($('game'));
@@ -36,8 +42,24 @@ const game = new Game($('game'), input, {
   taunt: () => socket.emit('taunt'),
   hint: (h) => { if ($('hint').innerHTML !== h) $('hint').innerHTML = h; },
   toast: (t, bad) => toast(t, bad),
-  onLocalHit: () => { $('hurt').classList.add('on'); setTimeout(() => $('hurt').classList.remove('on'), 60); },
+  onLocalHit: (from) => {
+    $('hurt').classList.add('on');
+    setTimeout(() => $('hurt').classList.remove('on'), 60);
+    if (Array.isArray(from)) damageFrom(from);
+  },
+  hitMarker: (kill) => hitMarker(kill),
+  caughtByMe: (e) => {
+    sfx.kill();
+    bigMsg(`🎯 ¡Pillado${e.name ? ': ' + e.name : ''}!`);
+  },
+  caughtMe: () => bigMsg('😵 ¡Te han pillado!', room?.settings?.infection ? 'Ahora eres buscador: ¡caza a los demás!' : 'Ahora miras como espectador'),
 });
+
+// ------------------------------------------------------------ ajustes guardados en este navegador
+const prefs = { fov: 75, invertY: false, quality: isTouch ? 'media' : 'alta', showFps: false };
+try { Object.assign(prefs, JSON.parse(localStorage.getItem('prefs') || '{}')); } catch { /* ajustes corruptos: valores por defecto */ }
+const savePrefs = () => { try { localStorage.setItem('prefs', JSON.stringify(prefs)); } catch { /* modo privado */ } };
+game.applyPrefs(prefs);
 
 // ------------------------------------------------------------ menú
 const FUN_NOUNS = ['Pingüino', 'Mapache', 'Calcetín', 'Pepino', 'Churro', 'Panda', 'Gnomo', 'Bigote', 'Pato', 'Erizo', 'Koala', 'Dragón', 'Ratón', 'Plátano', 'Fantasma', 'Cactus'];
@@ -159,8 +181,10 @@ function renderLobby() {
   fillSelect($('set-hide'), [15, 20, 30, 45, 60, 90].map((n) => [n, `${n} s`]), s.hideTime);
   fillSelect($('set-seek'), [60, 90, 120, 180, 240, 300, 420, 600].map((n) => [n, n >= 60 ? `${n / 60} min` : `${n} s`]), s.seekTime);
   fillSelect($('set-seekers'), [[0, 'Automático'], [1, '1'], [2, '2'], [3, '3'], [4, '4']], s.seekers);
+  fillSelect($('set-bots'), BOT_LEVELS, s.botLevel || 'normal');
   $('set-infection').checked = s.infection;
-  for (const id of ['set-rounds', 'set-hide', 'set-seek', 'set-seekers', 'set-infection']) $(id).disabled = !host;
+  $('set-autotaunt').checked = s.autoTaunt !== false;
+  for (const id of ['set-rounds', 'set-hide', 'set-seek', 'set-seekers', 'set-bots', 'set-infection', 'set-autotaunt']) $(id).disabled = !host;
   $('btn-start').classList.toggle('hidden', !host);
   $('lobby-wait').classList.toggle('hidden', host);
 }
@@ -174,6 +198,8 @@ $('set-hide').onchange = (e) => socket.emit('settings', { hideTime: e.target.val
 $('set-seek').onchange = (e) => socket.emit('settings', { seekTime: e.target.value });
 $('set-seekers').onchange = (e) => socket.emit('settings', { seekers: e.target.value });
 $('set-infection').onchange = (e) => socket.emit('settings', { infection: e.target.checked });
+$('set-bots').onchange = (e) => socket.emit('settings', { botLevel: e.target.value });
+$('set-autotaunt').onchange = (e) => socket.emit('settings', { autoTaunt: e.target.checked });
 $('btn-start').onclick = () => { unlockAudio(); socket.emit('start'); };
 $('btn-add-bot').onclick = () => socket.emit('chat', '/bot 1');
 $('btn-remove-bots').onclick = () => socket.emit('chat', '/quitarbots');
@@ -208,6 +234,11 @@ function renderInvite() {
   }
   $('invite-note').textContent = note;
   $('invite-note').classList.toggle('hidden', !note);
+  // lo mismo en la pestaña «Invitar» del menú de pausa
+  $('pause-url').value = url;
+  $('pause-qr').src = $('invite-qr').src;
+  $('pause-whatsapp').href = $('btn-whatsapp').href;
+  $('pause-share').classList.toggle('hidden', !navigator.share);
 }
 
 async function copyInvite(btn) {
@@ -227,7 +258,9 @@ const shareInvite = () => navigator.share({ title: 'Escondite 3D', text: inviteT
 $('btn-copy').onclick = () => copyInvite($('btn-copy'));
 $('btn-share').onclick = shareInvite;
 $('invite-url').onclick = (e) => e.target.select();
-$('btn-invite-game').onclick = () => (navigator.share && isTouch ? shareInvite() : copyInvite($('btn-invite-game')));
+$('btn-invite-game').onclick = () => copyInvite($('btn-invite-game'));
+$('pause-share').onclick = shareInvite;
+$('pause-url').onclick = (e) => e.target.select();
 
 const leaveRoom = () => {
   socket.emit('leave');
@@ -240,7 +273,20 @@ const leaveRoom = () => {
   game.stop();
 };
 $('btn-leave').onclick = leaveRoom;
-$('btn-quit').onclick = () => { $('pause').classList.add('hidden'); leaveRoom(); };
+// salir pide confirmación con un segundo toque (sin ventanas que bloqueen el juego)
+let quitArmed = 0;
+$('btn-quit').onclick = () => {
+  if (Date.now() - quitArmed > 3000) {
+    quitArmed = Date.now();
+    $('btn-quit').textContent = '¿Seguro? Pulsa otra vez para salir';
+    setTimeout(() => { if (Date.now() - quitArmed >= 3000) $('btn-quit').textContent = '🚪 Salir de la sala'; }, 3100);
+    return;
+  }
+  quitArmed = 0;
+  $('btn-quit').textContent = '🚪 Salir de la sala';
+  $('pause').classList.add('hidden');
+  leaveRoom();
+};
 
 // ------------------------------------------------------------ chat
 function addChat(m) {
@@ -278,36 +324,121 @@ function closeChat() {
   $('chat-box').classList.remove('open');
   $('game-chat-form').classList.add('hidden');
   $('game-chat-in').blur();
+  updateClickToPlay();
 }
-$('game-chat-in').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeChat(); } });
-$('btn-chat').onclick = () => ($('chat-box').classList.contains('open') ? closeChat() : openChat());
+const chatOpen = () => $('chat-box').classList.contains('open');
+$('game-chat-in').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeChat(); } });
+$('btn-chat').onclick = () => (chatOpen() ? closeChat() : openChat());
 
+let lastUnlock = 0;
 window.addEventListener('keydown', (e) => {
   if (!inGame()) return;
   const typing = document.activeElement === $('game-chat-in');
-  if (e.key === 'Enter' && !typing) { e.preventDefault(); openChat(); }
+  if (e.key === 'Escape' && !typing) {
+    // con el ratón capturado el navegador usa Esc para soltarlo (y eso ya abre el menú)
+    if (input.locked || performance.now() - lastUnlock < 400) return;
+    e.preventDefault();
+    if (!$('pause').classList.contains('hidden')) closePause(false);
+    else if (anyOverlay()) { closeOverlays(); updateClickToPlay(); }
+    else openPause();
+  } else if (e.key === 'Enter' && !typing) { e.preventDefault(); openChat(); }
   else if (e.key === '/' && !typing && isHost()) { e.preventDefault(); openChat('/'); }
-  else if (e.code === 'Tab' && !typing) { e.preventDefault(); renderScoreboard(); $('scoreboard').classList.remove('hidden'); }
+  else if (e.code === 'Tab' && !typing) { e.preventDefault(); renderScores($('score-body')); $('scoreboard').classList.remove('hidden'); }
   else if (e.code === 'KeyP' && !typing && isHost()) toggleOverlay('admin-panel');
 });
 window.addEventListener('keyup', (e) => { if (e.code === 'Tab') $('scoreboard').classList.add('hidden'); });
 
-// ------------------------------------------------------------ overlays
+// ------------------------------------------------------------ overlays y menú de pausa
+const OVERLAYS = ['admin-panel', 'pause', 'scoreboard'];
+const anyOverlay = () => OVERLAYS.some((o) => !$(o).classList.contains('hidden'));
+function closeOverlays() { for (const o of OVERLAYS) $(o).classList.add('hidden'); }
+
 function toggleOverlay(id) {
   const el = $(id);
   const open = el.classList.contains('hidden');
-  for (const o of ['admin-panel', 'pause', 'scoreboard']) $(o).classList.add('hidden');
-  if (open) { el.classList.remove('hidden'); document.exitPointerLock?.(); if (id === 'admin-panel') renderAdminTargets(); if (id === 'scoreboard') renderScoreboard(); }
+  closeOverlays();
+  if (open) {
+    el.classList.remove('hidden');
+    document.exitPointerLock?.();
+    input.keys.clear();
+    if (id === 'admin-panel') renderAdminTargets();
+    if (id === 'scoreboard') renderScores($('score-body'));
+  }
+  updateClickToPlay();
 }
-document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => $(b.dataset.close).classList.add('hidden'); });
-document.querySelectorAll('.overlay').forEach((o) => o.addEventListener('click', (e) => { if (e.target === o) o.classList.add('hidden'); }));
+document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => { $(b.dataset.close).classList.add('hidden'); updateClickToPlay(); }; });
+document.querySelectorAll('.overlay').forEach((o) => o.addEventListener('click', (e) => { if (e.target === o) { o.classList.add('hidden'); updateClickToPlay(); } }));
 $('btn-admin').onclick = () => toggleOverlay('admin-panel');
-$('btn-menu').onclick = () => toggleOverlay('pause');
+$('btn-menu').onclick = () => ($('pause').classList.contains('hidden') ? openPause() : closePause(false));
 $('btn-scores').onclick = () => toggleOverlay('scoreboard');
+
+function openPause(tab) {
+  if (!inGame()) return;
+  closeChat();
+  closeOverlays();
+  $('pause').classList.remove('hidden');
+  document.exitPointerLock?.();
+  input.keys.clear();
+  input.clearPressed();
+  if (tab) selectTab(tab);
+  renderPause();
+  updateClickToPlay();
+}
+function closePause(resume) {
+  $('pause').classList.add('hidden');
+  if (resume && !isTouch) lockPointer();
+  updateClickToPlay();
+}
+function lockPointer() {
+  try {
+    const r = $('game').requestPointerLock?.();
+    // justo después de soltarlo con Esc el navegador no deja capturarlo otra vez: entonces, clic para jugar
+    if (r?.catch) r.catch(() => updateClickToPlay());
+  } catch { updateClickToPlay(); }
+}
+$('btn-resume').onclick = () => closePause(true);
+$('btn-pause-admin').onclick = () => { $('pause').classList.add('hidden'); toggleOverlay('admin-panel'); };
+
+function selectTab(id) {
+  document.querySelectorAll('#pause .tab').forEach((t) => t.classList.toggle('sel', t.dataset.tab === id));
+  document.querySelectorAll('#pause .tab-body').forEach((b) => b.classList.toggle('hidden', b.id !== id));
+  if (id === 'tab-invite' && room) renderInvite();
+}
+document.querySelectorAll('#pause .tab').forEach((t) => { t.onclick = () => { sfx.click(); selectTab(t.dataset.tab); }; });
+
+const ROLE_LABEL = { hider: '🙈 Escondido', seeker: '🔫 Buscador', spectator: '👀 Espectador' };
+function renderPause() {
+  if (!room || $('pause').classList.contains('hidden')) return;
+  const left = Math.max(0, room.endAt - game.serverNow());
+  const phase = { hiding: 'Escondiéndose', seeking: 'Buscando', roundEnd: 'Fin de ronda' }[room.state] || '';
+  const info = `Sala <b>${room.code}</b> · ${esc(MAPS[room.settings.map].name)} · Ronda ${room.round}/${room.settings.rounds} · ${phase} ${fmt(left)} · ${ROLE_LABEL[game.myRole()]}`;
+  if ($('pause-info').innerHTML !== info) $('pause-info').innerHTML = info;
+  renderScores($('pause-scores'));
+  $('btn-pause-admin').classList.toggle('hidden', !isHost());
+}
+
+// ajustes
+const showVal = () => {
+  $('sens-val').textContent = `${(+input.sensitivity).toFixed(1)}`;
+  $('vol-val').textContent = `${Math.round(getVolume() * 100)}%`;
+  $('fov-val').textContent = `${prefs.fov}°`;
+};
 $('sens').value = input.sensitivity;
-$('sens').oninput = (e) => input.setSensitivity(parseFloat(e.target.value));
+$('sens').oninput = (e) => { input.setSensitivity(parseFloat(e.target.value)); showVal(); };
+$('vol').value = getVolume();
+$('vol').oninput = (e) => { setVolume(parseFloat(e.target.value)); showVal(); };
+$('vol').onchange = () => { unlockAudio(); sfx.click(); };
+$('fov').value = prefs.fov;
+$('fov').oninput = (e) => { prefs.fov = parseInt(e.target.value, 10); game.applyPrefs({ fov: prefs.fov }); savePrefs(); showVal(); };
+$('quality').value = prefs.quality;
+$('quality').onchange = (e) => { prefs.quality = e.target.value; game.applyPrefs({ quality: prefs.quality }); savePrefs(); };
 $('mute').checked = isMuted();
 $('mute').onchange = (e) => setMuted(e.target.checked);
+$('invert-y').checked = prefs.invertY;
+$('invert-y').onchange = (e) => { prefs.invertY = e.target.checked; game.applyPrefs({ invertY: prefs.invertY }); savePrefs(); };
+$('show-fps').checked = prefs.showFps;
+$('show-fps').onchange = (e) => { prefs.showFps = e.target.checked; savePrefs(); };
+showVal();
 
 function renderAdminTargets() {
   if (!room) return;
@@ -335,15 +466,16 @@ function roleName(p) {
   return 'En la sala';
 }
 
-function renderScoreboard() {
+function renderScores(tbody) {
   if (!room) return;
   const list = [...room.players].sort((a, b) => b.score - a.score);
-  $('score-body').innerHTML = list.map((p, i) => `<tr>
+  const html = list.map((p, i) => `<tr class="${p.id === myId ? 'me' : ''}">
     <td>${i + 1}</td>
-    <td><span class="dot" style="background:${p.color}"></span>${esc(p.name)}${p.id === room.hostId ? ' 👑' : ''}${p.id === myId ? ' (tú)' : ''}${p.connected === false ? ' 📶' : ''}</td>
+    <td><span class="dot" style="background:${p.color}"></span>${p.isBot ? '🤖 ' : ''}${esc(p.name)}${p.id === room.hostId ? ' 👑' : ''}${p.id === myId ? ' (tú)' : ''}${p.connected === false ? ' 📶' : ''}</td>
     <td class="role-${p.role}">${roleName(p)}</td>
     <td>${p.catches}</td>
     <td><b>${p.score}</b></td></tr>`).join('');
+  if (tbody.innerHTML !== html) tbody.innerHTML = html;
 }
 
 // ------------------------------------------------------------ pantallas
@@ -356,7 +488,9 @@ function showScreen(name) {
   $('touch-ui').classList.toggle('hidden', !(name === 'game' && isTouch));
   if (name !== 'game') {
     document.exitPointerLock?.();
-    for (const o of ['admin-panel', 'pause', 'scoreboard']) $(o).classList.add('hidden');
+    closeOverlays();
+    closeChat();
+    for (const o of ['intro', 'summary', 'click-to-play']) $(o).classList.add('hidden');
   }
 }
 const inGame = () => room && ['hiding', 'seeking', 'roundEnd'].includes(room.state);
@@ -370,7 +504,11 @@ socket.on('room', (r) => {
   game.setRoom(r, myId);
   $('btn-admin').classList.toggle('hidden', r.hostId !== myId);
   if (!$('admin-panel').classList.contains('hidden')) renderAdminTargets();
-  if (!$('scoreboard').classList.contains('hidden')) renderScoreboard();
+  if (!$('scoreboard').classList.contains('hidden')) renderScores($('score-body'));
+  renderPause();
+  // puntos ganados o perdidos
+  const before = prevRoom?.players.find((p) => p.id === myId);
+  if (before && prevRoom.state !== 'lobby' && r.state !== 'lobby' && me.score !== before.score) popup(me.score - before.score);
 
   if (r.state === 'lobby') {
     showScreen('lobby');
@@ -380,19 +518,81 @@ socket.on('room', (r) => {
     if (prevRoom?.state !== 'gameEnd') { showEnd(); sfx.win(); }
     else renderEndButtons();
   } else {
-    const wasGame = prevRoom && ['hiding', 'seeking', 'roundEnd'].includes(prevRoom.state);
     showScreen('game');
     game.start();
-    if (!wasGame && !isTouch) $('click-to-play').classList.toggle('hidden', input.locked);
-    if (prevRoom?.state !== r.state && r.state === 'seeking') sfx.start();
+    const changed = prevRoom?.state !== r.state;
+    if (changed && r.state === 'seeking') sfx.start();
+    if (r.state === 'hiding' && (changed || prevRoom?.round !== r.round)) showIntro(r, me);
+    if (r.state !== 'hiding') { $('intro').classList.add('hidden'); $('hud').classList.remove('intro-on'); }
+    if (r.state === 'roundEnd' && r.summary) showSummary(r, me, changed);
+    else $('summary').classList.add('hidden');
     const prevMe = prevRoom?.players.find((p) => p.id === myId);
     if (prevMe && prevMe.frozenUntil < me.frozenUntil) sfx.freeze();
+    updateClickToPlay();
   }
 });
 
+// Esc (o cambiar de ventana) suelta el ratón: entonces sale el menú de pausa
 input.onLockChange = (locked) => {
-  if (inGame() && !isTouch) $('click-to-play').classList.toggle('hidden', locked);
+  if (!locked) lastUnlock = performance.now();
+  if (!locked && inGame() && !isTouch && !anyOverlay() && !chatOpen()) openPause();
+  updateClickToPlay();
 };
+function updateClickToPlay() {
+  const show = inGame() && !isTouch && !input.locked && !anyOverlay() && !chatOpen();
+  $('click-to-play').classList.toggle('hidden', !show);
+}
+
+// ------------------------------------------------------------ inicio y fin de ronda
+let introTimer = null;
+function showIntro(r, me) {
+  const role = game.myRole();
+  const hideTime = r.settings.hideTime;
+  const card = {
+    hider: ['🙈', 'Eres ESCONDIDO', `Apunta a un objeto y ${isTouch ? 'toca 🎭' : 'pulsa <kbd>E</kbd>'} para convertirte en él. Escóndete junto a objetos iguales: tienes <b>${hideTime} s</b> antes de que salgan a buscarte.`],
+    seeker: ['🔫', 'Eres BUSCADOR', `Espera <b>${hideTime} s</b> con los ojos tapados. Luego dispara a los objetos sospechosos… ¡pero si fallas con uno de verdad pierdes vida!`],
+    spectator: ['👀', 'Miras esta ronda', me.role === 'spectator' ? 'Entrarás a jugar en la siguiente ronda.' : 'Vuela libremente por el mapa.'],
+  }[role];
+  $('intro-round').textContent = `Ronda ${r.round} de ${r.settings.rounds}`;
+  $('intro-icon').textContent = card[0];
+  $('intro-role').textContent = card[1];
+  $('intro-role').className = `intro-role ${role}`;
+  $('intro-text').innerHTML = card[2];
+  $('intro-map').textContent = `Mapa: ${MAPS[r.settings.map].name}`;
+  const el = $('intro');
+  el.classList.remove('hidden');
+  el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+  $('hud').classList.add('intro-on');
+  sfx.roundStart();
+  clearTimeout(introTimer);
+  introTimer = setTimeout(() => { el.classList.add('hidden'); $('hud').classList.remove('intro-on'); }, 5000);
+}
+
+function showSummary(r, me, fresh) {
+  const s = r.summary;
+  const winClass = s.winner === 'hiders' ? 'hider' : s.winner === 'seekers' ? 'seeker' : '';
+  $('sum-title').textContent = s.title;
+  $('sum-title').className = `sum-title ${winClass}`;
+  $('sum-text').textContent = s.text;
+  const who = (n, c) => `<b style="color:${c}">${esc(n)}</b>`;
+  $('sum-catches').innerHTML = s.catches.length
+    ? s.catches.map((c) => `<li>${c.by ? who(c.by, c.byColor) + ' → ' : ''}${who(c.name, c.color)} <small>${c.prop ? '(' + esc(PROPS[c.prop]?.name || c.prop) + ')' : '(sin disfraz)'}</small></li>`).join('')
+    : '<li class="muted">Nadie</li>';
+  $('sum-survivors').innerHTML = s.survivors.length
+    ? s.survivors.map((p) => `<li>${who(p.name, p.color)} <small>${p.prop ? '(' + esc(PROPS[p.prop]?.name || p.prop) + ')' : ''}</small></li>`).join('')
+    : '<li class="muted">Nadie</li>';
+  $('sum-standings').innerHTML = s.standings.slice(0, 6).map((p) => `<li class="${p.id === myId ? 'me' : ''}">
+    <span><span class="dot" style="background:${p.color}"></span>${p.isBot ? '🤖 ' : ''}${esc(p.name)}</span>
+    <span><b>${p.score}</b> ${p.delta ? `<small class="${p.delta > 0 ? 'up' : 'down'}">${p.delta > 0 ? '+' : ''}${p.delta}</small>` : ''}</span></li>`).join('');
+  $('summary').classList.remove('hidden');
+  $('announce').classList.add('hidden');
+  $('hud').classList.remove('announcing');
+  if (fresh) {
+    // ¿ha ganado mi equipo?
+    const mine = me.role === 'seeker' ? 'seekers' : me.role === 'hider' && me.alive ? 'hiders' : null;
+    if (mine && mine === s.winner) sfx.win(); else sfx.lose();
+  }
+}
 
 socket.on('snap', (list) => game.applySnapshot(list));
 socket.on('spawn', ({ pos, rot, propRot }) => game.spawn(pos, rot, propRot));
@@ -452,13 +652,15 @@ socket.on('connect', () => {
 // ------------------------------------------------------------ HUD
 let announceTimer = null;
 function announce(title, text, ms = 3000) {
+  if (room?.state === 'roundEnd' && !$('summary').classList.contains('hidden')) return;
   $('announce-title').textContent = title;
   $('announce-text').textContent = text || '';
   const el = $('announce');
   el.classList.remove('hidden');
   el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+  $('hud').classList.add('announcing');
   clearTimeout(announceTimer);
-  announceTimer = setTimeout(() => el.classList.add('hidden'), ms);
+  announceTimer = setTimeout(() => { el.classList.add('hidden'); $('hud').classList.remove('announcing'); }, ms);
 }
 function feed(text) {
   const d = document.createElement('div');
@@ -479,6 +681,67 @@ function toast(text, bad = false) {
 function fmt(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+let lastPauseRender = 0;
+
+// de dónde viene cada ruido: flechas alrededor de la mira
+const pingEls = [];
+function renderPings() {
+  const now = performance.now();
+  game.pings.forEach((p, i) => {
+    let el = pingEls[i];
+    if (!el) { el = document.createElement('div'); el.className = 'ping'; el.innerHTML = '<span>♪</span>'; $('pings').appendChild(el); pingEls[i] = el; }
+    const deg = (game.angleTo(p.x, p.z) * 180) / Math.PI;
+    el.style.transform = `rotate(${deg}deg)`;
+    el.style.opacity = Math.min(1, (p.until - now) / 800);
+    el.firstChild.style.transform = `rotate(${-deg}deg)`;
+    el.classList.remove('hidden');
+  });
+  for (let i = game.pings.length; i < pingEls.length; i++) pingEls[i].classList.add('hidden');
+}
+
+// te han dado: marca roja hacia el que dispara
+function damageFrom(from) {
+  const el = document.createElement('div');
+  el.className = 'dmg-arc';
+  el.style.transform = `rotate(${(game.angleTo(from[0], from[2]) * 180) / Math.PI}deg)`;
+  $('dmg').appendChild(el);
+  setTimeout(() => el.remove(), 1300);
+}
+
+let hitTimer = null;
+function hitMarker(kill) {
+  sfx.hitmark();
+  const el = $('hitmarker');
+  el.classList.toggle('kill', !!kill);
+  el.classList.add('on');
+  clearTimeout(hitTimer);
+  hitTimer = setTimeout(() => el.classList.remove('on'), kill ? 400 : 180);
+}
+
+function popup(delta) {
+  const el = document.createElement('div');
+  el.className = `popup ${delta > 0 ? 'up' : 'down'}`;
+  el.textContent = `${delta > 0 ? '+' : ''}${delta}`;
+  $('popups').appendChild(el);
+  setTimeout(() => el.remove(), 1400);
+}
+
+let bigTimer = null;
+function bigMsg(text, sub = '') {
+  const el = $('big-msg');
+  el.textContent = text;
+  if (sub) {
+    const s = document.createElement('small');
+    s.textContent = sub;
+    el.appendChild(s);
+  }
+  el.classList.remove('hidden');
+  el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+  $('toast').classList.add('hidden'); // en el móvil ocupan el mismo sitio
+  clearTimeout(bigTimer);
+  bigTimer = setTimeout(() => el.classList.add('hidden'), sub ? 2600 : 1600);
 }
 
 function hudLoop() {
@@ -522,11 +785,26 @@ function hudLoop() {
   }
   const hiders = room.players.filter((p) => p.role === 'hider');
   const alive = hiders.filter((p) => p.alive).length;
-  $('alive-count').textContent = `🙈 Escondidos: ${alive}/${hiders.length}`;
+  const seekers = room.players.filter((p) => p.role === 'seeker').length;
+  // con «los pillados buscan» los pillados dejan de ser escondidos: basta con decir cuántos quedan
+  const aliveTxt = room.settings.infection ? alive : `${alive}/${hiders.length}`;
+  const aliveHtml = `🙈 <span class="lbl">Escondidos: </span>${aliveTxt} · 🔫 ${seekers}`;
+  if ($('alive-count').innerHTML !== aliveHtml) $('alive-count').innerHTML = aliveHtml;
+  $('alive-count').classList.toggle('hidden', room.state === 'roundEnd');
 
   const top = [...room.players].sort((a, b) => b.score - a.score).slice(0, 5);
   const html = top.map((p, i) => `<div><span>${['🥇', '🥈', '🥉', '4.', '5.'][i]} <span style="color:${p.color}">${esc(p.name)}</span></span><b>${p.score}</b></div>`).join('');
   if ($('mini-score').innerHTML !== html) $('mini-score').innerHTML = html;
+
+  // siguiente ronda
+  if (room.state === 'roundEnd' && room.summary) {
+    const txt = room.summary.last ? `Resultados finales en ${Math.max(0, sec)} s…` : `Siguiente ronda en ${Math.max(0, sec)} s…`;
+    if ($('sum-next').textContent !== txt) $('sum-next').textContent = txt;
+  }
+  renderPings();
+  if (prefs.showFps) $('fps').textContent = `${game.fps} FPS`;
+  $('fps').classList.toggle('hidden', !prefs.showFps);
+  if (!$('pause').classList.contains('hidden') && performance.now() - lastPauseRender > 500) { lastPauseRender = performance.now(); renderPause(); }
 
   // botones táctiles según el rol
   if (isTouch) {

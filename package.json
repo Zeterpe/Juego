@@ -1,0 +1,31 @@
+{
+  "name": "escondite-3d",
+  "version": "1.0.0",
+  "description": "Escondite 3D multijugador (prop hunt) con comandos de administrador",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/sim.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zeterpe/Juego.git"
+  },
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Zeterpe/Juego/issues"
+  },
+  "homepage": "https://github.com/Zeterpe/Juego#readme",
+  "dependencies": {
+    "express": "^4.22.3",
+    "socket.io": "^4.8.4",
+    "three": "^0.160.0"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
+  }
+}

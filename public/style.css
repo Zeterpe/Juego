@@ -265,3 +265,7 @@ td .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; 
   .blind-timer { font-size: 80px; }
   th:nth-child(3), td:nth-child(3) { display: none; }
 }
+@media (max-width: 420px) {
+  .colors { gap: 6px; }
+  .colors button { width: 30px; height: 30px; }
+}

@@ -54,6 +54,27 @@ function glass(mesh, color, opacity = 0.5) {
   return mesh;
 }
 
+// esfera con gajos de dos colores (rayas de la sandía)
+let stripedGeo = null;
+function stripedSphere() {
+  if (stripedGeo) return stripedGeo;
+  const g = new THREE.SphereGeometry(0.25, 16, 10).toNonIndexed();
+  const pos = g.attributes.position;
+  const light = new THREE.Color('#2ecc71');
+  const dark = new THREE.Color('#1b5e20');
+  const colors = [];
+  for (let i = 0; i < pos.count; i += 3) {
+    const x = pos.getX(i) + pos.getX(i + 1) + pos.getX(i + 2);
+    const z = pos.getZ(i) + pos.getZ(i + 1) + pos.getZ(i + 2);
+    const slice = Math.floor(((Math.atan2(z, x) + Math.PI) / (Math.PI * 2)) * 16);
+    const c = slice % 2 ? dark : light;
+    for (let k = 0; k < 3; k++) colors.push(c.r, c.g, c.b);
+  }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  stripedGeo = g;
+  return g;
+}
+
 const builders = {
   crate(g) {
     part(g, B(1, 1, 1), '#b5843f', 0, 0.5, 0);
@@ -384,7 +405,10 @@ const builders = {
     for (const sg of [-1, 1]) part(g, C(0.012, 0.012, 0.4, 6), '#f5cba7', sg * 0.1, 0.6, 0.05, 0, 0, sg * 1.4);
   },
   watermelon(g) {
-    part(g, geo('sph', 0.25, 14, 10), '#27ae60', 0, 0.2, 0).scale.set(1.2, 0.8, 0.9);
+    // los polos de la esfera quedan en los extremos, así las rayas van a lo largo
+    const m = part(g, stripedSphere(), '#ffffff', 0, 0.2, 0, 0, 0, Math.PI / 2);
+    m.material = mat('#ffffff', { vertexColors: true });
+    m.scale.set(0.8, 1.2, 0.9);
     part(g, C(0.015, 0.02, 0.06, 6), '#6d4c41', 0, 0.41, 0);
   },
 

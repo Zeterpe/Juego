@@ -29,14 +29,21 @@ app.get('/:code([a-zA-Z]{4})', (req, res) => res.redirect(`/?sala=${req.params.c
 function lanIps() {
   return Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
 }
-app.get('/api/lan', (_req, res) => res.json({ urls: lanIps().map((ip) => `http://${ip}:${PORT}`) }));
+app.get('/api/lan', (req, res) => {
+  const local = ['localhost', '127.0.0.1', '::1'].includes(req.hostname);
+  res.json({ urls: local ? lanIps().map((ip) => `http://${ip}:${PORT}`) : [] });
+});
 
 // código QR del enlace de invitación
 app.get('/qr.svg', async (req, res) => {
   const text = String(req.query.text || '');
   if (!/^https?:\/\/\S{1,200}$/.test(text)) return res.status(400).send('Enlace no válido');
-  const svg = await QRCode.toString(text, { type: 'svg', margin: 1, color: { dark: '#1b1f3b', light: '#ffffff' } });
-  res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(svg);
+  try {
+    const svg = await QRCode.toString(text, { type: 'svg', margin: 1, color: { dark: '#1b1f3b', light: '#ffffff' } });
+    res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(svg);
+  } catch {
+    res.status(500).send('No se pudo crear el QR');
+  }
 });
 
 const server = http.createServer(app);

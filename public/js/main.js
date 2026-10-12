@@ -414,6 +414,9 @@ socket.on('kicked', () => {
   history.replaceState(null, '', '/');
 });
 
+// el servidor gratis de Render se duerme tras 15 min sin visitas: mientras haya alguien en una sala, lo mantenemos despierto
+setInterval(() => { if (room) fetch('/health', { cache: 'no-store' }).catch(() => {}); }, 4 * 60 * 1000);
+
 // ------------------------------------------------------------ reconexión
 // socket.io reconecta solo; al volver pedimos nuestro sitio con la clave de esta pestaña
 socket.on('disconnect', () => { if (room) $('net-banner').classList.remove('hidden'); });
@@ -575,3 +578,4 @@ function confetti() {
 
 // acceso para depurar desde la consola del navegador
 window.game = game;
+window.socket = socket;

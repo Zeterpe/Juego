@@ -2,6 +2,8 @@
 // statics: geometría fija. box = [x1, y1, z1, x2, y2, z2]. nocol = sin colisión (suelos, alfombras).
 // props:   objetos que sirven de disfraz. t = tipo (ver props.js), p = [x, y, z], r = rotación (radianes).
 
+import { PROPS } from './props.js';
+
 const H = Math.PI / 2;
 
 // Generador pseudoaleatorio con semilla, para que todos vean el mismo mapa.
@@ -108,54 +110,85 @@ function casa() {
     // salón
     { t: 'sofa', p: [-8, 0, -2.2], r: Math.PI },
     { t: 'tv', p: [-8, 0, -9.3], r: 0 },
+    { t: 'speaker', p: [-9.4, 0, -9.5], r: 0 },
     { t: 'table', p: [-8, 0, -5], r: 0 },
-    { t: 'chair', p: [-13, 0, -8.5], r: H },
+    { t: 'computer', p: [-8.5, 0.8, -5], r: 0 },
+    { t: 'vase', p: [-7.5, 0.8, -4.8], r: 0 },
+    { t: 'armchair', p: [-10.5, 0, -5], r: H },
+    { t: 'piano', p: [-12, 0, -9.5], r: 0 },
+    { t: 'chair', p: [-12, 0, -8.6], r: Math.PI },
+    { t: 'clock', p: [-14.6, 0, -3.5], r: H },
     { t: 'lamp', p: [-14.2, 0, -1], r: 0 },
     { t: 'plant', p: [-14.2, 0, -9.2], r: 0 },
+    { t: 'gift', p: [-14.2, 0, -8.3], r: 0.2 },
+    { t: 'gift', p: [-14.3, 0, -7.6], r: 0 },
     { t: 'plant', p: [1.2, 0, -9.2], r: 0 },
+    { t: 'guitar', p: [1.6, 0, -8], r: -H },
     { t: 'bookshelf', p: [-3, 0, -9.6], r: 0 },
     { t: 'bookshelf', p: [-1.3, 0, -9.6], r: 0 },
+    { t: 'globe', p: [-3, 2, -9.6], r: 0 },
+    { t: 'trophy', p: [-1.3, 2, -9.6], r: 0 },
+    { t: 'coatrack', p: [-4.4, 0, -9.4], r: 0 },
     { t: 'ball', p: [-5.5, 0, -6], r: 0 },
-    { t: 'computer', p: [-8.5, 0.8, -5], r: 0 },
     { t: 'smallbox', p: [-12.5, 0, -3], r: 0.3 },
     { t: 'trash', p: [1.3, 0, -1], r: 0 },
     // cocina
     { t: 'fridge', p: [14.2, 0, -2.5], r: -H },
+    { t: 'stove', p: [14.3, 0, -3.55], r: -H },
     { t: 'chair', p: [6.3, 0, -5.3], r: H },
     { t: 'chair', p: [10.7, 0, -5.3], r: -H },
+    { t: 'watermelon', p: [8.5, 0.95, -5.25], r: 0.3 },
+    { t: 'microwave', p: [11, 1.0, -9.3], r: 0 },
+    { t: 'toaster', p: [8.5, 1.0, -9.3], r: 0 },
     { t: 'trash', p: [2.8, 0, -1], r: 0 },
     { t: 'washer', p: [4, 0, -8.3], r: 0 },
+    { t: 'bucket', p: [5, 0, -8.4], r: 0 },
+    { t: 'gascan', p: [2.6, 0, -9.3], r: 0 },
     { t: 'plant', p: [12, 0, -1], r: 0 },
     { t: 'table', p: [5, 0, -2.2], r: 0 },
+    { t: 'radio', p: [5.3, 0.8, -2.3], r: 0 },
     { t: 'chair', p: [4, 0, -1.2], r: Math.PI },
     // dormitorio
     { t: 'bed', p: [-11.5, 0, 8.6], r: H },
+    { t: 'teddy', p: [-11, 0.6, 8.6], r: H },
+    { t: 'nightstand', p: [-13.1, 0, 9.5], r: Math.PI },
     { t: 'lamp', p: [-14.2, 0, 6.4], r: 0 },
     { t: 'bookshelf', p: [-7, 0, 9.6], r: Math.PI },
-    { t: 'chair', p: [-6, 0, 2.8], r: 0 },
-    { t: 'computer', p: [-6, 0, 1.5], r: Math.PI },
+    { t: 'guitar', p: [-9, 0, 9.6], r: Math.PI },
+    { t: 'table', p: [-6.5, 0, 1], r: 0 },
+    { t: 'computer', p: [-6.5, 0.8, 0.85], r: 0 },
+    { t: 'chair', p: [-6.5, 0, 1.9], r: Math.PI },
+    { t: 'backpack', p: [-7.6, 0, 2.2], r: 0.4 },
+    { t: 'suitcase', p: [-14.5, 0, 3], r: H },
     { t: 'plant', p: [-4.8, 0, 9.2], r: 0 },
     { t: 'smallbox', p: [-14, 0, 1], r: 0 },
     { t: 'duck', p: [-10, 0, 5.5], r: 0.6 },
     // baño
     { t: 'toilet', p: [2.3, 0, 9.3], r: Math.PI },
+    { t: 'toiletpaper', p: [1.5, 0, 9.6], r: 0 },
+    { t: 'toiletpaper', p: [1.5, 0.26, 9.6], r: 0 },
     { t: 'washer', p: [2.4, 0, 1], r: -H },
     { t: 'duck', p: [-2, 0.6, 8.6], r: 0 },
+    { t: 'bucket', p: [0.3, 0, 9.5], r: 0 },
     { t: 'trash', p: [-3.3, 0, 1], r: 0 },
     { t: 'plant', p: [-3.3, 0, 6.8], r: 0 },
     // garaje
     { t: 'tire', p: [4, 0, 1], r: 0 },
-    { t: 'tire', p: [4, 0.35, 1], r: 0 },
+    { t: 'tire', p: [4, 0.3, 1], r: 0 },
     { t: 'tire', p: [5, 0, 1], r: 0 },
     { t: 'barrel', p: [14.2, 0, 9.2], r: 0 },
     { t: 'barrel', p: [13.2, 0, 9.2], r: 0 },
     { t: 'crate', p: [4, 0, 4], r: 0 },
     { t: 'crate', p: [4, 1, 4], r: 0.2 },
     { t: 'smallbox', p: [5.2, 0, 4.5], r: 0 },
-    { t: 'cone', p: [7, 0, 0.8], r: 0 },
+    { t: 'arcade', p: [6.5, 0, 0.62], r: 0 },
+    { t: 'cone', p: [7.6, 0, 1.4], r: 0 },
     { t: 'cone', p: [13.8, 0, 1], r: 0 },
-    { t: 'washer', p: [6, 0, 9.3], r: Math.PI },
-    { t: 'ball', p: [12, 0, 7.5], r: 0 },
+    { t: 'gascan', p: [14.45, 0, 1.3], r: 0 },
+    { t: 'washer', p: [10, 0, 9.4], r: Math.PI },
+    { t: 'bike', p: [11.8, 0, 8.6], r: 0 },
+    { t: 'extinguisher', p: [3.35, 0, 6], r: H },
+    { t: 'ball', p: [12.3, 0, 7.1], r: 0 },
     // jardín
     { t: 'tree', p: [-20, 0, -15], r: 0 },
     { t: 'tree', p: [19, 0, -16], r: 0 },
@@ -169,14 +202,30 @@ function casa() {
     { t: 'bush', p: [-17.5, 0, -2], r: 0 },
     { t: 'bush', p: [20, 0, 4], r: 0 },
     { t: 'bush', p: [-8, 0, 14], r: 0 },
+    { t: 'flowers', p: [-8.2, 0, -10.6], r: 0 },
+    { t: 'flowers', p: [-3.8, 0, -10.6], r: 0 },
+    { t: 'streetlamp', p: [-8.6, 0, -14], r: 0 },
+    { t: 'streetlamp', p: [-3.4, 0, -17], r: 0 },
+    { t: 'gnome', p: [-3.8, 0, -13.5], r: 0.4 },
+    { t: 'gnome', p: [-11, 0, -16], r: -0.3 },
+    { t: 'gnome', p: [14, 0, -12.5], r: 0 },
     { t: 'mailbox', p: [-9, 0, -18.5], r: 0 },
+    { t: 'hydrant', p: [-10.5, 0, -18.8], r: 0 },
+    { t: 'snowman', p: [-1, 0, -16.5], r: 0.3 },
+    { t: 'pumpkin', p: [10, 0, -16], r: 0 },
+    { t: 'pumpkin', p: [11, 0, -15.4], r: 1 },
+    { t: 'doghouse', p: [-19, 0, -12], r: H },
+    { t: 'wheelbarrow', p: [20, 0, -12], r: 0 },
+    { t: 'haybale', p: [21.5, 0, 8], r: 0 },
     { t: 'bench', p: [17, 0, -8], r: H },
     { t: 'rock', p: [21, 0, -2], r: 0.5 },
     { t: 'rock', p: [-21, 0, -8], r: 1 },
     { t: 'trash', p: [-3, 0, -18.5], r: 0 },
     { t: 'chair', p: [-15, 0, 12.5], r: 0 },
     { t: 'chair', p: [-15, 0, 14.5], r: 0 },
+    { t: 'bucket', p: [-15.2, 0, 16.5], r: 0 },
     { t: 'table', p: [6, 0, 14], r: 0 },
+    { t: 'watermelon', p: [6.3, 0.8, 14], r: 0 },
     { t: 'ball', p: [8, 0, -15], r: 0 },
   ];
 
@@ -188,7 +237,7 @@ function casa() {
     ground: '#6fbf5a',
     sky: '#8fd3ff',
     spawns: {
-      hider: [[-8, -5], [-10, -7], [-6, -3], [8, -3], [-9, 5], [0, 5], [6, 3], [-4, -8]],
+      hider: [[-6, -7], [-10, -7], [-6, -3], [8, -3], [-9, 5], [0, 5], [6, 3], [-4, -8]],
       seeker: [[-6, -16], [-3, -16], [-9, -16], [0, -16]],
     },
     statics,
@@ -242,14 +291,19 @@ function almacen() {
 
   const props = [];
   const rand = rng(42);
-  const shelfTypes = ['crate', 'smallbox', 'barrel', 'smallbox', 'crate', 'tire'];
+  // lo que hay en las estanterías (todo cabe entre los postes y bajo el estante de arriba)
+  const shelfTypes = ['crate', 'smallbox', 'smallbox', 'crate', 'barrel', 'tire', 'gift', 'suitcase', 'toiletpaper',
+    'bucket', 'gascan', 'chest', 'teddy', 'ball', 'pumpkin', 'watermelon', 'radio', 'trophy'];
   for (const [x, z1, z2] of racks) {
-    for (let z = z1 + 0.7; z < z2 - 0.4; z += 1.3) {
+    const n = Math.max(1, Math.round((z2 - z1) / 1.3));
+    for (let i = 0; i < n; i++) {
+      const z = +(z1 + ((i + 0.5) * (z2 - z1)) / n).toFixed(3);
       for (const y of [0.1, 1.4, 2.7]) {
-        if (rand() < 0.45) continue;
+        if (rand() < 0.4) continue;
         const t = shelfTypes[Math.floor(rand() * shelfTypes.length)];
-        if (y > 0.1 && (t === 'barrel')) continue;
-        props.push({ t, p: [x, y, z], r: rand() < 0.5 ? 0 : 0.15 });
+        if (y > 0.1 && t === 'barrel') continue;
+        const big = PROPS[t].size[0] > 0.8 || PROPS[t].size[2] > 0.8;
+        props.push({ t, p: [x, y, z], r: big || rand() < 0.5 ? 0 : 0.15 });
       }
     }
   }
@@ -259,8 +313,8 @@ function almacen() {
     { t: 'pallet', p: [-10, 0, -12.5], r: 0 },
     { t: 'crate', p: [-10, 0.15, -12.5], r: 0 },
     { t: 'pallet', p: [-7, 0, -12.5], r: 0 },
-    { t: 'smallbox', p: [-7.2, 0.15, -12.3], r: 0.3 },
-    { t: 'smallbox', p: [-6.7, 0.15, -12.8], r: 0 },
+    { t: 'smallbox', p: [-7.3, 0.15, -12.2], r: 0 },
+    { t: 'smallbox', p: [-6.7, 0.15, -12.75], r: 0 },
     { t: 'barrel', p: [-3, 0, -13.5], r: 0 },
     { t: 'barrel', p: [-2.1, 0, -13.5], r: 0 },
     { t: 'barrel', p: [-2.5, 0, -12.6], r: 0 },
@@ -268,8 +322,8 @@ function almacen() {
     { t: 'cone', p: [3.5, 0, -10.6], r: 0 },
     { t: 'cone', p: [-12, 0, -9.3], r: 0 },
     { t: 'tire', p: [10, 0, -13.5], r: 0 },
-    { t: 'tire', p: [10, 0.35, -13.5], r: 0 },
-    { t: 'tire', p: [10, 0.7, -13.5], r: 0 },
+    { t: 'tire', p: [10, 0.3, -13.5], r: 0 },
+    { t: 'tire', p: [10, 0.6, -13.5], r: 0 },
     { t: 'crate', p: [-17, 1.2, -13], r: 0 },
     { t: 'crate', p: [16, 1.2, -13], r: 0.4 },
     { t: 'smallbox', p: [17.5, 1.2, -12], r: 0 },
@@ -282,7 +336,7 @@ function almacen() {
     { t: 'crate', p: [10.5, 1.15, -4], r: 0.3 },
     { t: 'trash', p: [-19.3, 0, 0], r: 0 },
     { t: 'smallbox', p: [14, 0, 2], r: 0.7 },
-    { t: 'smallbox', p: [14.6, 0, 2.6], r: 0 },
+    { t: 'smallbox', p: [14.8, 0, 2.8], r: 0 },
     { t: 'barrel', p: [18.8, 0, -3], r: 0 },
     { t: 'barrel', p: [18.8, 0, -2], r: 0 },
     { t: 'barrel', p: [18.8, 0, 3], r: 0 },
@@ -302,6 +356,29 @@ function almacen() {
     { t: 'trash', p: [13, 0, 9], r: 0 },
     { t: 'fridge', p: [12.6, 0, 11], r: H },
     { t: 'sofa', p: [15, 0, 14.4], r: Math.PI },
+    { t: 'whiteboard', p: [17.9, 0, 9.0], r: 0 },
+    { t: 'trophy', p: [19.6, 2, 12], r: -H },
+    { t: 'globe', p: [16.6, 0.8, 11.8], r: 0 },
+    { t: 'radio', p: [15.45, 0.8, 12.2], r: 0 },
+    { t: 'coatrack', p: [13.5, 0, 14.3], r: 0 },
+    { t: 'backpack', p: [14.2, 0, 12.5], r: 0.5 },
+    // zona de descanso
+    { t: 'vending', p: [10.5, 0, 14.4], r: Math.PI },
+    { t: 'watercooler', p: [9.3, 0, 14.6], r: Math.PI },
+    { t: 'arcade', p: [8.3, 0, 14.4], r: Math.PI },
+    { t: 'speaker', p: [7.3, 0, 14.6], r: Math.PI },
+    // seguridad y carga
+    { t: 'extinguisher', p: [-19.65, 0, 4], r: H },
+    { t: 'extinguisher', p: [19.65, 0, 6], r: -H },
+    { t: 'extinguisher', p: [0.5, 0, 14.7], r: Math.PI },
+    { t: 'cart', p: [-5, 0, 10.5], r: 0.3 },
+    { t: 'cart', p: [-6.1, 0, 11.6], r: 0.2 },
+    { t: 'barrier', p: [-12, 0, -10.6], r: 0 },
+    { t: 'barrier', p: [12, 0, -10.6], r: 0 },
+    { t: 'gascan', p: [13, 0, -13.8], r: 0 },
+    { t: 'gascan', p: [13.4, 0, -13.2], r: 0 },
+    { t: 'haybale', p: [18.6, 1.2, -13.8], r: 0 },
+    { t: 'toiletpaper', p: [-16, 1.2, -12], r: 0 },
   );
 
   return {
@@ -355,64 +432,128 @@ function parque() {
   ];
 
   const props = [
+    // alrededor de la fuente
     { t: 'bench', p: [4, 0, 4], r: -Math.PI / 4 },
     { t: 'bench', p: [-4, 0, 4], r: Math.PI / 4 },
     { t: 'bench', p: [4, 0, -4], r: Math.PI + Math.PI / 4 },
     { t: 'bench', p: [-4, 0, -4], r: Math.PI - Math.PI / 4 },
-    { t: 'lamp', p: [2.2, 0, 8], r: 0 },
-    { t: 'lamp', p: [-2.2, 0, -8], r: 0 },
-    { t: 'lamp', p: [8, 0, -2.2], r: 0 },
-    { t: 'lamp', p: [-8, 0, 2.2], r: 0 },
+    { t: 'teddy', p: [4, 0.47, 4], r: -Math.PI / 4 },
+    { t: 'backpack', p: [-3, 0, 5.2], r: 0.8 },
+    { t: 'flowers', p: [6.5, 0, 6.5], r: 0 },
+    { t: 'flowers', p: [-6.5, 0, -6.5], r: 0 },
+    { t: 'flowers', p: [6.5, 0, -6.5], r: 0 },
+    // farolas, papeleras y bocas de incendio junto a los caminos
+    { t: 'streetlamp', p: [2.2, 0, 8], r: 0 },
+    { t: 'streetlamp', p: [-2.2, 0, -8], r: 0 },
+    { t: 'streetlamp', p: [8, 0, -2.2], r: 0 },
+    { t: 'streetlamp', p: [-8, 0, 2.2], r: 0 },
+    { t: 'streetlamp', p: [2.2, 0, -18], r: 0 },
+    { t: 'streetlamp', p: [-2.2, 0, 18], r: 0 },
+    { t: 'streetlamp', p: [-18, 0, -2.2], r: 0 },
+    { t: 'streetlamp', p: [12, 0, 2.2], r: 0 },
+    { t: 'hydrant', p: [2.1, 0, 15.5], r: 0 },
+    { t: 'hydrant', p: [-15.5, 0, -2.1], r: H },
     { t: 'trash', p: [2.3, 0, 12], r: 0 },
     { t: 'trash', p: [-2.3, 0, -14], r: 0 },
     { t: 'trash', p: [-14, 0, 2.3], r: 0 },
+    { t: 'bike', p: [6, 0, 1.95], r: H },
+    { t: 'bike', p: [-1.95, 0, -12], r: 0 },
+    // zona de juegos
     { t: 'ball', p: [-12, 0, 13], r: 0 },
     { t: 'ball', p: [-18, 0, 20], r: 0 },
+    { t: 'chest', p: [-12, 0, 20.5], r: Math.PI },
+    { t: 'bucket', p: [-13, 0, 11.5], r: 0 },
+    { t: 'teddy', p: [-20.5, 0, 12.5], r: 0.5 },
+    { t: 'tire', p: [-15, 0, 21], r: 0 },
+    { t: 'tire', p: [-25, 0, 26], r: 0 },
+    // estanque
     { t: 'duck', p: [14, 0.03, 14], r: 0.4 },
     { t: 'duck', p: [18, 0.03, 16], r: 2 },
     { t: 'duck', p: [12, 0.03, 18], r: 1 },
+    // quiosco
     { t: 'mailbox', p: [-13.5, 0, -13], r: 0 },
+    { t: 'vending', p: [-13.2, 0, -18.5], r: H },
     { t: 'smallbox', p: [-21, 0, -19], r: 0 },
     { t: 'smallbox', p: [-20.3, 0, -19.2], r: 0.4 },
     { t: 'crate', p: [-21.2, 0, -13], r: 0 },
     { t: 'table', p: [-18, 0, -16], r: 0 },
+    { t: 'radio', p: [-18.3, 0.8, -16], r: 0 },
     { t: 'chair', p: [-18, 0, -14.8], r: Math.PI },
     { t: 'chair', p: [-18, 0, -17.2], r: 0 },
+    { t: 'arcade', p: [-15, 0, -19.35], r: 0 },
+    { t: 'watercooler', p: [-21.45, 0, -15.5], r: H },
+    // obras entre los muros de piedra
     { t: 'cone', p: [20, 0, -18], r: 0 },
     { t: 'cone', p: [14, 0, -18], r: 0 },
-    { t: 'barrel', p: [25, 0, 26], r: 0 },
-    { t: 'barrel', p: [26, 0, 25], r: 0 },
-    { t: 'tire', p: [-25, 0, 26], r: 0 },
-    { t: 'tire', p: [-15, 0, 21], r: 0 },
+    { t: 'barrier', p: [15.2, 0, -17.4], r: 0 },
+    { t: 'barrier', p: [18.8, 0, -17.4], r: 0 },
+    { t: 'wheelbarrow', p: [17, 0, -15.9], r: H },
+    { t: 'haybale', p: [13.5, 0, -15.2], r: 0 },
+    { t: 'gascan', p: [21, 0, -15], r: 0 },
+    // escenario con grupo de música
     { t: 'chair', p: [21, 0.6, 2], r: -H },
     { t: 'chair', p: [21, 0.6, -2], r: -H },
     { t: 'lamp', p: [27, 0.6, 3.3], r: 0 },
     { t: 'lamp', p: [27, 0.6, -3.3], r: 0 },
     { t: 'tv', p: [26.5, 0.6, 0], r: -H },
+    { t: 'drum', p: [24.5, 0.6, -2], r: 0 },
+    { t: 'speaker', p: [27.3, 0.6, 1.8], r: -H },
+    { t: 'speaker', p: [27.3, 0.6, -1.8], r: -H },
+    { t: 'guitar', p: [23.5, 0.6, 2.5], r: -H },
+    { t: 'piano', p: [25, 0.6, 3.3], r: Math.PI },
+    // pícnic, granja y rincones
+    { t: 'table', p: [-8, 0, -20], r: 0 },
+    { t: 'watermelon', p: [-8, 0.8, -20], r: 0.4 },
+    { t: 'bench', p: [-8, 0, -21.2], r: 0 },
+    { t: 'cart', p: [10, 0, -8], r: 0.5 },
+    { t: 'doghouse', p: [26, 0, 20], r: -H },
+    { t: 'haybale', p: [25, 0, 22.5], r: 0 },
+    { t: 'haybale', p: [25.3, 0.72, 22.5], r: 0.2 },
+    { t: 'wheelbarrow', p: [23.3, 0, 24.5], r: 0 },
+    { t: 'barrel', p: [25, 0, 26], r: 0 },
+    { t: 'barrel', p: [26, 0, 25], r: 0 },
+    { t: 'pumpkin', p: [27, 0, -26.5], r: 0 },
+    { t: 'pumpkin', p: [25.8, 0, -27.2], r: 1 },
+    { t: 'snowman', p: [-27, 0, 15], r: 0.6 },
+    { t: 'gnome', p: [6, 0, 9], r: 0.3 },
+    { t: 'gnome', p: [-7, 0, -9], r: 2 },
+    { t: 'gnome', p: [9, 0, -24], r: -0.5 },
+    { t: 'mushroom', p: [-25, 0, 3], r: 0 },
+    { t: 'mushroom', p: [-26, 0, 4.5], r: 1 },
+    { t: 'mushroom', p: [24, 0, 12], r: 0 },
+    { t: 'mushroom', p: [-6, 0, -25], r: 2 },
+    { t: 'cactus', p: [28, 0, -10], r: 0 },
     { t: 'bench', p: [16, 0, 8], r: 0 },
     { t: 'bench', p: [-25, 0, -5], r: H },
   ];
 
-  // árboles, arbustos y rocas repartidos con semilla (evitando caminos y zonas ocupadas)
+  const spawns = {
+    hider: [[5, 5], [-5, 5], [5, -5], [-5, -5], [10, 0], [-10, 0], [0, 10], [0, -10]],
+    seeker: [[-26, -26], [-24, -26], [-26, -24], [-24, -24]],
+  };
+
+  // árboles, arbustos y rocas repartidos con semilla, sin pisar caminos, zonas ocupadas ni otros objetos
   const rand = rng(7);
-  const busy = [[-23, -21, -13, -11], [9, 9, 23, 21], [-23, 9, -9, 23], [17, -5, 29, 5], [11, -23, 23, -13], [-4, -4, 4, 4]];
+  const busy = [[-23, -21, -12, -11], [9, 9, 23, 21], [-23, 9, -9, 23], [17, -5, 29, 5], [11, -23, 23, -13], [-4, -4, 4, 4]];
   const free = (x, z) => Math.abs(x) > 2.8 && Math.abs(z) > 2.8 && !busy.some(([a, b, c, d]) => x > a && x < c && z > b && z < d);
-  const placed = [];
-  const tryPlace = (t, n, minDist) => {
+  const occupied = props.map((q) => [q.p[0], q.p[2], Math.max(PROPS[q.t].size[0], PROPS[q.t].size[2]) / 2]);
+  for (const [x, z] of [...spawns.hider, ...spawns.seeker]) occupied.push([x, z, 0.6]);
+  const tryPlace = (t, n, gap) => {
+    const radius = Math.max(PROPS[t].size[0], PROPS[t].size[2]) / 2;
     let tries = 0;
-    while (n > 0 && tries++ < 2000) {
+    while (n > 0 && tries++ < 3000) {
       const x = -28 + rand() * 56;
       const z = -28 + rand() * 56;
       if (!free(x, z)) continue;
-      if (placed.some(([px, pz]) => (px - x) ** 2 + (pz - z) ** 2 < minDist * minDist)) continue;
-      placed.push([x, z]);
+      if (occupied.some(([px, pz, pr]) => Math.hypot(px - x, pz - z) < pr + radius + gap)) continue;
+      occupied.push([x, z, radius]);
       props.push({ t, p: [+x.toFixed(2), 0, +z.toFixed(2)], r: +(rand() * Math.PI * 2).toFixed(2) });
       n--;
     }
   };
-  tryPlace('tree', 26, 4);
-  tryPlace('bush', 30, 2.2);
-  tryPlace('rock', 14, 2);
+  tryPlace('tree', 26, 2.2);
+  tryPlace('bush', 30, 0.9);
+  tryPlace('rock', 14, 0.9);
 
   return {
     id: 'parque',
@@ -421,10 +562,7 @@ function parque() {
     bounds: [-30, -30, 30, 30],
     ground: '#58b14c',
     sky: '#9fd8ff',
-    spawns: {
-      hider: [[5, 5], [-5, 5], [5, -5], [-5, -5], [10, 0], [-10, 0], [0, 10], [0, -10]],
-      seeker: [[-26, -26], [-24, -26], [-26, -24], [-24, -24]],
-    },
+    spawns,
     statics,
     props,
   };
